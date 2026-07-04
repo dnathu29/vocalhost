@@ -93,7 +93,9 @@ export default function GuestPhoneCall() {
       )
       
       if (res.data.audio) {
-        const audio = new Audio(`data:audio/mp3;base64,${res.data.audio}`)
+        // Gradium TTS returns WAV bytes (see backend /api/tts, format: "wav")
+        const format = res.data.format || 'wav'
+        const audio = new Audio(`data:audio/${format};base64,${res.data.audio}`)
         audio.play()
         audio.onended = () => setIsPlaying(false)
       }
