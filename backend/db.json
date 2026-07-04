@@ -1,0 +1,135 @@
+{
+  "workshops": [
+    {
+      "id": "w1",
+      "name": "Weekend Pottery Workshop",
+      "location": "Paris, France",
+      "instructor": "Elena Rodriguez (Spain)",
+      "sessions": [
+        {
+          "session_id": "s1",
+          "time": "14:00",
+          "current_pax": 2,
+          "min_pax": 4,
+          "status": "warning"
+        },
+        {
+          "session_id": "s2",
+          "time": "16:00",
+          "current_pax": 4,
+          "min_pax": 4,
+          "status": "confirmed"
+        }
+      ]
+    },
+    {
+      "id": "w2",
+      "name": "Advanced Sculpture Class",
+      "location": "Berlin, Germany",
+      "instructor": "Marco Federici (Italy)",
+      "sessions": [
+        {
+          "session_id": "s3",
+          "time": "10:00",
+          "current_pax": 1,
+          "min_pax": 3,
+          "status": "warning"
+        },
+        {
+          "session_id": "s4",
+          "time": "15:00",
+          "current_pax": 5,
+          "min_pax": 3,
+          "status": "full"
+        }
+      ]
+    },
+    {
+      "id": "w3",
+      "name": "Beginner's Painting",
+      "location": "Amsterdam, Netherlands",
+      "instructor": "Sophie Dubois (Belgium)",
+      "sessions": [
+        {
+          "session_id": "s5",
+          "time": "18:00",
+          "current_pax": 3,
+          "min_pax": 3,
+          "status": "confirmed"
+        }
+      ]
+    }
+  ],
+  "bookings": [
+    {
+      "booking_id": "b1",
+      "guest_name": "Marcus Mueller",
+      "country": "Germany",
+      "email": "marcus.mueller@example.de",
+      "session_id": "s1",
+      "pax": 2,
+      "phone": "+49 30 1234 5678",
+      "experience": "Beginner"
+    },
+    {
+      "booking_id": "b2",
+      "guest_name": "Giulia Rossi",
+      "country": "Italy",
+      "email": "giulia.rossi@example.it",
+      "session_id": "s2",
+      "pax": 2,
+      "phone": "+39 06 2345 6789",
+      "experience": "Intermediate"
+    },
+    {
+      "booking_id": "b3",
+      "guest_name": "Emma Johnson",
+      "country": "United Kingdom",
+      "email": "emma.johnson@example.uk",
+      "session_id": "s2",
+      "pax": 2,
+      "phone": "+44 20 3456 7890",
+      "experience": "Advanced"
+    },
+    {
+      "booking_id": "b4",
+      "guest_name": "Yuki Tanaka",
+      "country": "Japan",
+      "email": "yuki.tanaka@example.jp",
+      "session_id": "s3",
+      "pax": 1,
+      "phone": "+81 3 4567 8901",
+      "experience": "Beginner"
+    },
+    {
+      "booking_id": "b5",
+      "guest_name": "Pierre Blanc",
+      "country": "France",
+      "email": "pierre.blanc@example.fr",
+      "session_id": "s4",
+      "pax": 3,
+      "phone": "+33 1 5678 9012",
+      "experience": "Intermediate"
+    },
+    {
+      "booking_id": "b6",
+      "guest_name": "Amara Okafor",
+      "country": "Nigeria",
+      "email": "amara.okafor@example.ng",
+      "session_id": "s4",
+      "pax": 2,
+      "phone": "+234 1 6789 0123",
+      "experience": "Beginner"
+    },
+    {
+      "booking_id": "b7",
+      "guest_name": "Carlos Santos",
+      "country": "Brazil",
+      "email": "carlos.santos@example.br",
+      "session_id": "s5",
+      "pax": 3,
+      "phone": "+55 11 7890 1234",
+      "experience": "Intermediate"
+    }
+  ]
+}
