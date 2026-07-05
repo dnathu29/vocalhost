@@ -99,12 +99,13 @@ export default function GuestPhoneCall() {
       const plan = agentRes.data
 
       let responseText: string
-      if (plan.customers_to_contact?.length > 0) {
-        const c = plan.customers_to_contact[0]
-        const proposed = c.proposed_time
-          ? `We'd love to move you to the ${c.proposed_time} session for ${c.workshop_name}.`
-          : `We need to reschedule your ${c.workshop_name} booking.`
-        responseText = `Hi ${c.guest_name}! ${proposed} Would that work for you?`
+      const contact = plan.customers_to_contact?.[0]
+      const planItem = plan.consolidation_plan?.[0]
+      if (contact && planItem) {
+        const proposed = planItem.to_time
+          ? `We'd love to move you to the ${planItem.to_time} session for ${planItem.workshop_name}.`
+          : `We need to reschedule your ${planItem.workshop_name} booking.`
+        responseText = `Hi ${contact.guest_name}! ${proposed} Would that work for you?`
       } else {
         responseText = 'All sessions are confirmed — no changes needed. Have a great day!'
       }
