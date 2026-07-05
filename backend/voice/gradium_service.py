@@ -194,12 +194,7 @@ async def _stream_pcm_to_gradium(pcm: bytes, timeout: float) -> str:
         )
 
     headers = {"x-api-key": _api_key()}
-
-    # websockets renamed the header kwarg across versions; support both.
-    try:
-        connect_ctx = websockets.connect(GRADIUM_STT_URL, additional_headers=headers)
-    except TypeError:  # older websockets (<12) uses extra_headers
-        connect_ctx = websockets.connect(GRADIUM_STT_URL, extra_headers=headers)
+    connect_ctx = websockets.connect(GRADIUM_STT_URL, extra_headers=headers)
 
     segments: list[str] = []
 

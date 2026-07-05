@@ -94,15 +94,27 @@ export default function GuestPhoneCall() {
     if (!transcript) return
 
     try {
-      const mockResponse = 'Yes. The 16:00 session ends at 18:00 and includes a welcome drink voucher.'
-      setAiResponse(mockResponse)
+      setStatusText('Agent is thinking...')
+      const agentRes = await axios.post(`${API_BASE}/api/run-agent`)
+      const plan = agentRes.data
+
+      let responseText: string
+      if (plan.customers_to_contact?.length > 0) {
+        const c = plan.customers_to_contact[0]
+        const proposed = c.proposed_time
+          ? `We'd love to move you to the ${c.proposed_time} session for ${c.workshop_name}.`
+          : `We need to reschedule your ${c.workshop_name} booking.`
+        responseText = `Hi ${c.guest_name}! ${proposed} Would that work for you?`
+      } else {
+        responseText = 'All sessions are confirmed — no changes needed. Have a great day!'
+      }
+
+      setAiResponse(responseText)
       setStatusText('Agent response generated. Playing audio...')
-      
-      // Play TTS
-      await playTextToSpeech(mockResponse)
+      await playTextToSpeech(responseText)
     } catch (error) {
       console.error('Error generating response:', error)
-      setStatusText('Could not generate response. Try again.')
+      setStatusText('Could not reach booking system. Try again.')
     }
   }
 
