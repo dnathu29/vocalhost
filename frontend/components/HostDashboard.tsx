@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from 'react'
 import axios from 'axios'
+import type { CallContext } from './GuestPhoneCall'
 
 const API_BASE = 'http://localhost:8000'
 
@@ -10,6 +11,7 @@ interface Session {
   time: string
   current_pax: number
   min_pax: number
+  max_pax: number
   status: 'warning' | 'confirmed' | 'full'
 }
 
@@ -61,16 +63,16 @@ const FALLBACK_WORKSHOPS: Workshop[] = [
     workshop_id: 'w1',
     workshop_name: 'Weekend Pottery Workshop',
     sessions: [
-      { session_id: 's1', time: '14:00', current_pax: 2, min_pax: 4, status: 'warning' },
-      { session_id: 's2', time: '16:00', current_pax: 4, min_pax: 4, status: 'confirmed' }
+      { session_id: 's1', time: '14:00', current_pax: 2, min_pax: 4, max_pax: 8, status: 'warning' },
+      { session_id: 's2', time: '16:00', current_pax: 4, min_pax: 4, max_pax: 8, status: 'confirmed' }
     ]
   },
   {
     workshop_id: 'w2',
     workshop_name: 'Advanced Sculpture Class',
     sessions: [
-      { session_id: 's3', time: '10:00', current_pax: 1, min_pax: 3, status: 'warning' },
-      { session_id: 's4', time: '15:00', current_pax: 5, min_pax: 3, status: 'full' }
+      { session_id: 's3', time: '10:00', current_pax: 1, min_pax: 3, max_pax: 6, status: 'warning' },
+      { session_id: 's4', time: '15:00', current_pax: 5, min_pax: 3, max_pax: 6, status: 'full' }
     ]
   }
 ]
@@ -106,7 +108,7 @@ function StatusPill({ status }: { status: string }) {
   )
 }
 
-export default function HostDashboard() {
+export default function HostDashboard({ onStartCall }: { onStartCall: (ctx: CallContext) => void }) {
   const [workshops, setWorkshops] = useState<Workshop[]>([])
   const [loading, setLoading] = useState(true)
   const [agentRunning, setAgentRunning] = useState(false)
@@ -116,20 +118,11 @@ export default function HostDashboard() {
   const [approvedMoves, setApprovedMoves] = useState<string[]>([])
   const [calledGuests, setCalledGuests] = useState<string[]>([])
   const [actionMessage, setActionMessage] = useState('')
-  const [actionLog, setActionLog] = useState<any[]>([])
   const [showExecuteModal, setShowExecuteModal] = useState(false)
   const [selectedSession, setSelectedSession] = useState<Session | null>(null)
   const [showSessionModal, setShowSessionModal] = useState(false)
 
-  useEffect(() => { fetchSessions(); fetchActions() }, [])
-
-  const fetchActions = async () => {
-    try {
-      const res = await axios.get(`${API_BASE}/api/agent/actions`)
-      setActionLog(res.data.items || [])
-      setApiOnline(true)
-    } catch { setApiOnline(false) }
-  }
+  useEffect(() => { fetchSessions() }, [])
 
   const fetchSessions = async () => {
     try {
@@ -155,53 +148,52 @@ export default function HostDashboard() {
   }
 
   const handleApproveMove = (fromSessionId: string) => {
-    const run = async () => {
-      const planItem = agentPlan?.consolidation_plan.find(i => i.from_session_id === fromSessionId)
-      try {
-        await axios.post(`${API_BASE}/api/agent/actions/approve`, { from_session_id: fromSessionId, to_session_id: planItem?.to_session_id || null })
-        setApprovedMoves(prev => prev.includes(fromSessionId) ? prev.filter(id => id !== fromSessionId) : [...prev, fromSessionId])
-        setActionMessage(`Move approved for session ${fromSessionId}.`)
-        fetchActions()
-      } catch {
-        setApprovedMoves(prev => prev.includes(fromSessionId) ? prev.filter(id => id !== fromSessionId) : [...prev, fromSessionId])
-      }
-    }
-    run()
+    setApprovedMoves(prev => prev.includes(fromSessionId) ? prev.filter(id => id !== fromSessionId) : [...prev, fromSessionId])
+    setActionMessage(`Move ${approvedMoves.includes(fromSessionId) ? 'unapproved' : 'approved'} for session ${fromSessionId}.`)
   }
 
   const handleCallGuest = (bookingId: string, guestName: string) => {
-    const run = async () => {
-      try {
-        await axios.post(`${API_BASE}/api/agent/actions/call`, { booking_id: bookingId, guest_name: guestName })
-        if (!calledGuests.includes(bookingId)) setCalledGuests(prev => [...prev, bookingId])
-        setActionMessage(`Call logged for ${guestName}.`)
-        fetchActions()
-      } catch {
-        if (!calledGuests.includes(bookingId)) setCalledGuests(prev => [...prev, bookingId])
-      }
-    }
-    run()
+    if (!calledGuests.includes(bookingId)) setCalledGuests(prev => [...prev, bookingId])
+    const guest = agentPlan?.customers_to_contact.find(c => c.booking_id === bookingId)
+    // Try to match via current_session_id or proposed_session_id — new agent shape may differ
+    const planItem = agentPlan?.consolidation_plan?.[0] ?? null
+    onStartCall({
+      booking_id: bookingId,
+      guest_name: guestName,
+      from_session_id: (guest as any)?.current_session_id ?? planItem?.from_session_id ?? '',
+      from_time: planItem?.from_time ?? '',
+      to_session_id: (guest as any)?.proposed_session_id ?? planItem?.to_session_id ?? '',
+      to_time: planItem?.to_time ?? '',
+      workshop_name: planItem?.workshop_name ?? '',
+    })
   }
 
   const executeApprovedMovesConfirmed = async () => {
     setShowExecuteModal(false)
-    try {
-      for (const fromSessionId of approvedMoves) {
-        const planItem = agentPlan!.consolidation_plan.find(p => p.from_session_id === fromSessionId)
-        if (!planItem?.to_session_id) continue
-        await axios.post(`${API_BASE}/api/agent/actions/execute`, { from_session_id: planItem.from_session_id, to_session_id: planItem.to_session_id })
+    // Call the first approved guest — subsequent guests can be called one-by-one
+    for (const fromSessionId of approvedMoves) {
+      const planItem = agentPlan!.consolidation_plan.find(p => p.from_session_id === fromSessionId)
+      if (!planItem?.to_session_id) continue
+      const guest = agentPlan!.customers_to_contact.find(c => c.current_session_id === fromSessionId)
+      if (guest) {
+        setCalledGuests(prev => prev.includes(guest.booking_id) ? prev : [...prev, guest.booking_id])
+        onStartCall({
+          booking_id: guest.booking_id,
+          guest_name: guest.guest_name,
+          from_session_id: planItem.from_session_id,
+          from_time: planItem.from_time,
+          to_session_id: planItem.to_session_id,
+          to_time: planItem.to_time ?? '',
+          workshop_name: planItem.workshop_name,
+        })
+        break // open one call at a time
       }
-      await fetchSessions(); await fetchActions()
-      setActionMessage('Moves executed successfully.'); setApprovedMoves([])
-    } catch { setActionMessage('Failed to execute moves.') }
+    }
+    setApprovedMoves([])
   }
 
-  const handleUndo = async () => {
-    try {
-      const res = await axios.post(`${API_BASE}/api/agent/actions/undo`)
-      setActionMessage(res.data.status === 'success' ? 'Last action undone.' : 'Nothing to undo.')
-      await fetchSessions(); await fetchActions()
-    } catch { setActionMessage('Undo failed.') }
+  const handleUndo = () => {
+    setActionMessage('Undo is not available in the current workflow.')
   }
 
   const openSessionModal = (s: Session) => { setSelectedSession(s); setShowSessionModal(true) }
@@ -416,8 +408,8 @@ export default function HostDashboard() {
                                 <span className="text-espresso text-xs font-semibold">{s.time}</span>
                                 <StatusPill status={s.status} />
                               </div>
-                              <FillBar current={s.current_pax} min={s.min_pax} max={s.min_pax + 2} />
-                              <p className="text-warm text-xs mt-1">{s.current_pax}/{s.min_pax} guests</p>
+                              <FillBar current={s.current_pax} min={s.min_pax} max={s.max_pax} />
+                              <p className="text-warm text-xs mt-1">{s.current_pax}/{s.max_pax} guests</p>
                             </div>
                           )
                         })
@@ -431,34 +423,6 @@ export default function HostDashboard() {
         </div>
       </div>
 
-      {/* Action log */}
-      {actionLog.length > 0 && (
-        <div className="bg-parchment border border-blush rounded-2xl overflow-hidden card-shadow">
-          <div className="px-6 py-4 border-b border-blush bg-blush/30 flex items-center justify-between">
-            <h3 className="font-display text-xl text-espresso">Action Log</h3>
-            <div className="flex gap-2">
-              <button onClick={fetchActions} className="text-xs px-3 py-1.5 bg-cream border border-blush rounded-lg text-warm hover:text-espresso transition">Refresh</button>
-              <button onClick={handleUndo} className="text-xs px-3 py-1.5 border border-terracotta/30 text-terracotta rounded-lg hover:bg-terracotta/10 transition">Undo Last</button>
-            </div>
-          </div>
-          <div className="divide-y divide-blush/50">
-            {actionLog.map((act, idx) => (
-              <div key={idx} className="px-6 py-3 flex items-center justify-between hover:bg-blush/20 transition">
-                <div>
-                  <p className="text-espresso text-sm font-medium">
-                    {act.type === 'approve_reschedule' ? 'Reschedule approved' : act.type === 'call_guest' ? `Called ${act.guest_name}` : act.type}
-                  </p>
-                  <p className="text-warm text-xs">
-                    {act.type === 'approve_reschedule' && `${act.from_session_id} → ${act.to_session_id || '?'}`}
-                    {act.type === 'call_guest' && `Booking ${act.booking_id}`}
-                  </p>
-                </div>
-                <span className="text-mist text-xs">#{idx + 1}</span>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
 
       {/* Execute modal */}
       {showExecuteModal && (
@@ -490,9 +454,9 @@ export default function HostDashboard() {
             <div className="mb-5">
               <div className="flex justify-between text-sm mb-2">
                 <span className="text-warm">Occupancy</span>
-                <span className="text-espresso font-medium">{selectedSession.current_pax} / {selectedSession.min_pax} guests</span>
+                <span className="text-espresso font-medium">{selectedSession.current_pax} / {selectedSession.max_pax} guests</span>
               </div>
-              <FillBar current={selectedSession.current_pax} min={selectedSession.min_pax} max={selectedSession.min_pax + 2} />
+              <FillBar current={selectedSession.current_pax} min={selectedSession.min_pax} max={selectedSession.max_pax} />
               <div className="mt-2"><StatusPill status={selectedSession.status} /></div>
             </div>
             <div className="flex gap-3">

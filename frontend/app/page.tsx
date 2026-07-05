@@ -2,10 +2,10 @@
 
 import { useState } from 'react'
 import HostDashboard from '@/components/HostDashboard'
-import GuestPhoneCall from '@/components/GuestPhoneCall'
+import GuestPhoneCall, { type CallContext } from '@/components/GuestPhoneCall'
 
 export default function Home() {
-  const [view, setView] = useState<'host' | 'guest'>('host')
+  const [activeCall, setActiveCall] = useState<CallContext | null>(null)
 
   return (
     <main className="min-h-screen bg-cream">
@@ -20,35 +20,19 @@ export default function Home() {
               <span className="text-warm text-xs ml-2 hidden sm:inline">workshop intelligence</span>
             </div>
           </div>
-
-          <div className="flex items-center gap-1 bg-cream border border-blush rounded-full p-1 card-shadow">
-            <button
-              onClick={() => setView('host')}
-              className={`px-5 py-1.5 rounded-full text-sm font-medium transition-all duration-200 ${
-                view === 'host'
-                  ? 'bg-terracotta text-cream shadow-sm'
-                  : 'text-warm hover:text-espresso'
-              }`}
-            >
-              Host
-            </button>
-            <button
-              onClick={() => setView('guest')}
-              className={`px-5 py-1.5 rounded-full text-sm font-medium transition-all duration-200 ${
-                view === 'guest'
-                  ? 'bg-terracotta text-cream shadow-sm'
-                  : 'text-warm hover:text-espresso'
-              }`}
-            >
-              Guest Call
-            </button>
-          </div>
         </div>
       </nav>
 
       <div className="max-w-7xl mx-auto px-6 py-10">
-        {view === 'host' ? <HostDashboard /> : <GuestPhoneCall />}
+        <HostDashboard onStartCall={ctx => setActiveCall(ctx)} />
       </div>
+
+      {activeCall && (
+        <GuestPhoneCall
+          context={activeCall}
+          onClose={() => setActiveCall(null)}
+        />
+      )}
     </main>
   )
 }

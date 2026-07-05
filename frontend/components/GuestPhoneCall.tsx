@@ -1,46 +1,47 @@
 'use client'
 
-import { useState, useRef } from 'react'
+import { useState, useRef, useEffect, useCallback } from 'react'
 import axios from 'axios'
 
 const API_BASE = 'http://localhost:8000'
 
-export default function GuestPhoneCall() {
-  const [isRecording, setIsRecording] = useState(false)
-  const [transcript, setTranscript] = useState('')
-  const [aiResponse, setAiResponse] = useState('')
-  const [isPlaying, setIsPlaying] = useState(false)
-  const [statusText, setStatusText] = useState('Tap the mic to speak with the agent')
-  const [phase, setPhase] = useState<'idle' | 'recording' | 'processing' | 'responded'>('idle')
+export interface CallContext {
+  booking_id: string
+  guest_name: string
+  from_session_id: string
+  from_time: string
+  to_session_id: string
+  to_time: string
+  workshop_name: string
+  incentive?: string
+}
+
+interface Message {
+  role: 'guest' | 'agent'
+  text: string
+}
+
+type Phase = 'connecting' | 'agent-speaking' | 'listening' | 'processing' | 'ended'
+
+interface Props {
+  context: CallContext
+  onClose: () => void
+}
+
+export default function GuestPhoneCall({ context, onClose }: Props) {
+  const [phase, setPhase] = useState<Phase>('connecting')
+  const [messages, setMessages] = useState<Message[]>([])
+  const [statusText, setStatusText] = useState('Connecting...')
+  const [callDuration, setCallDuration] = useState(0)
 
   const mediaRecorderRef = useRef<MediaRecorder | null>(null)
   const audioChunksRef = useRef<Blob[]>([])
+  const streamRef = useRef<MediaStream | null>(null)
+  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  const endedRef = useRef(false)
+  const startedRef = useRef(false) // prevents Strict Mode double-fire
 
-  const startRecording = async () => {
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
-      const mediaRecorder = new MediaRecorder(stream)
-      mediaRecorderRef.current = mediaRecorder
-      audioChunksRef.current = []
-      mediaRecorder.ondataavailable = e => audioChunksRef.current.push(e.data)
-      mediaRecorder.onstop = async () => {
-        const blob = new Blob(audioChunksRef.current, { type: 'audio/webm' })
-        await processAudio(blob)
-        stream.getTracks().forEach(t => t.stop())
-      }
-      mediaRecorder.start()
-      setIsRecording(true); setPhase('recording'); setStatusText('Listening...')
-    } catch {
-      alert('Please enable microphone access')
-    }
-  }
-
-  const stopRecording = () => {
-    if (mediaRecorderRef.current) {
-      mediaRecorderRef.current.stop()
-      setIsRecording(false); setPhase('processing'); setStatusText('Transcribing...')
-    }
-  }
+  // --- helpers ---
 
   const blobToBase64 = (blob: Blob): Promise<string> =>
     new Promise((resolve, reject) => {
@@ -53,257 +54,270 @@ export default function GuestPhoneCall() {
       reader.readAsDataURL(blob)
     })
 
-  const processAudio = async (blob: Blob) => {
-    try {
-      setStatusText('Transcribing your voice...')
-      const base64Audio = await blobToBase64(blob)
-      const res = await axios.post(`${API_BASE}/api/stt`, { audio_data: base64Audio })
-      const text = res.data.text || ''
-      setTranscript(text || 'Could not transcribe audio')
-      if (text) await generateAIResponse(text)
-      else { setStatusText('Could not hear clearly. Try again.'); setPhase('idle') }
-    } catch {
-      const fallback = 'Can I move to the 16:00 session instead?'
-      setTranscript(fallback)
-      await generateAIResponse(fallback)
-    }
-  }
+  const playTTS = (text: string): Promise<void> =>
+    new Promise(async (resolve) => {
+      try {
+        const res = await axios.post(`${API_BASE}/api/tts`, { text })
+        if (res.data.audio) {
+          const audio = new Audio(`data:audio/${res.data.format || 'wav'};base64,${res.data.audio}`)
+          audio.onended = () => resolve()
+          audio.onerror = () => resolve()
+          audio.play()
+          return
+        }
+      } catch {}
+      // If TTS fails, wait a beat so the text is visible before continuing
+      setTimeout(resolve, 2000)
+    })
 
-  const generateAIResponse = async (guestText?: string) => {
-    if (!(guestText ?? transcript)) return
+  const endCall = useCallback(async () => {
+    if (endedRef.current) return
+    endedRef.current = true
+    if (timerRef.current) clearInterval(timerRef.current)
+    streamRef.current?.getTracks().forEach(t => t.stop())
+    setPhase('ended')
+    setStatusText('Call ended')
+    await axios.post(`${API_BASE}/api/negotiate/${context.booking_id}/reset`).catch(() => {})
+  }, [context.booking_id])
+
+  // One full turn: call /api/negotiate, speak reply, then start listening
+  const agentTurn = useCallback(async (guestMessage: string | null) => {
+    if (endedRef.current) return
+    setPhase('processing')
+    setStatusText('Agent thinking...')
     try {
-      setStatusText('Agent is thinking...')
-      const agentRes = await axios.post(`${API_BASE}/api/run-agent`)
-      const plan = agentRes.data
-      const contact = plan.customers_to_contact?.[0]
-      const planItem = plan.consolidation_plan?.[0]
-      let responseText: string
-      if (contact && planItem) {
-        const proposed = planItem.to_time
-          ? `We'd love to move you to the ${planItem.to_time} session for ${planItem.workshop_name}.`
-          : `We need to reschedule your ${planItem.workshop_name} booking.`
-        responseText = `Hi ${contact.guest_name}! ${proposed} Would that work for you?`
-      } else {
-        responseText = 'All sessions are confirmed — no changes needed. Have a wonderful day!'
+      const payload: Record<string, unknown> = {
+        booking_id: context.booking_id,
+        guest_message: guestMessage,
+        guest_name: context.guest_name,
+        from_session_id: context.from_session_id,
+        from_time: context.from_time,
+        to_session_id: context.to_session_id,
+        to_time: context.to_time,
+        workshop_name: context.workshop_name,
+        incentive: context.incentive ?? 'a complimentary drink voucher',
       }
-      setAiResponse(responseText); setPhase('responded')
-      await playTextToSpeech(responseText)
+      const res = await axios.post(`${API_BASE}/api/negotiate`, payload)
+      const { agent_message, call_ended } = res.data as { agent_message: string; tool_results: unknown[]; call_ended: boolean }
+
+      setMessages(prev => [...prev, { role: 'agent', text: agent_message }])
+      setPhase('agent-speaking')
+      setStatusText('Agent speaking...')
+      await playTTS(agent_message)
+
+      if (call_ended) { await endCall(); return }
+
+      if (!endedRef.current) startListening()
     } catch {
-      setStatusText('Could not reach booking system.'); setPhase('idle')
+      setStatusText('Connection error — ending call.')
+      await endCall()
+    }
+  }, [context, endCall])
+
+  const startListening = useCallback(() => {
+    if (endedRef.current) return
+    setPhase('listening')
+    setStatusText('Listening — speak now...')
+
+    navigator.mediaDevices.getUserMedia({ audio: true }).then(stream => {
+      streamRef.current = stream
+      const recorder = new MediaRecorder(stream)
+      mediaRecorderRef.current = recorder
+      audioChunksRef.current = []
+
+      recorder.ondataavailable = e => audioChunksRef.current.push(e.data)
+      recorder.onstop = async () => {
+        stream.getTracks().forEach(t => t.stop())
+        if (endedRef.current) return
+        setPhase('processing')
+        setStatusText('Transcribing...')
+        try {
+          const blob = new Blob(audioChunksRef.current, { type: 'audio/webm' })
+          const base64 = await blobToBase64(blob)
+          const sttRes = await axios.post(`${API_BASE}/api/stt`, { audio_data: base64 })
+          const text: string = sttRes.data.text || ''
+          if (text) {
+            setMessages(prev => [...prev, { role: 'guest', text }])
+            await agentTurn(text)
+          } else {
+            // Nothing heard — listen again
+            startListening()
+          }
+        } catch {
+          // STT failed — listen again
+          startListening()
+        }
+      }
+
+      recorder.start()
+
+      // Auto-stop after 8 seconds of listening
+      setTimeout(() => {
+        if (recorder.state === 'recording') recorder.stop()
+      }, 8000)
+    }).catch(() => {
+      setStatusText('Microphone unavailable — tap End to close.')
+    })
+  }, [agentTurn])
+
+  const handleManualStop = () => {
+    if (mediaRecorderRef.current?.state === 'recording') {
+      mediaRecorderRef.current.stop()
     }
   }
 
-  const playTextToSpeech = async (text: string) => {
-    setIsPlaying(true); setStatusText('Agent speaking...')
-    try {
-      const res = await axios.post(`${API_BASE}/api/tts`, { text })
-      if (res.data.audio) {
-        const audio = new Audio(`data:audio/${res.data.format || 'wav'};base64,${res.data.audio}`)
-        audio.play()
-        audio.onended = () => { setIsPlaying(false); setStatusText('Tap mic to respond') }
-      } else { setIsPlaying(false); setStatusText('Tap mic to respond') }
-    } catch { setIsPlaying(false); setStatusText('(Audio unavailable — text shown above)') }
-  }
+  // Kick off: agent speaks first
+  useEffect(() => {
+    // Guard against React 18 Strict Mode double-invoke
+    if (startedRef.current) return
+    startedRef.current = true
+    endedRef.current = false
+    timerRef.current = setInterval(() => setCallDuration(d => d + 1), 1000)
+    agentTurn(null)
+    return () => {
+      if (timerRef.current) clearInterval(timerRef.current)
+      streamRef.current?.getTracks().forEach(t => t.stop())
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
-  const handleReset = () => {
-    setTranscript(''); setAiResponse(''); setPhase('idle')
-    setStatusText('Tap the mic to speak with the agent')
-  }
+  const formatDuration = (s: number) => `${String(Math.floor(s / 60)).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}`
 
-  const phaseColor = {
-    idle: 'bg-mist',
-    recording: 'bg-terracotta animate-pulse',
+  const phaseColor: Record<Phase, string> = {
+    connecting: 'bg-mist animate-pulse',
+    'agent-speaking': 'bg-sage animate-pulse',
+    listening: 'bg-terracotta animate-pulse',
     processing: 'bg-gold animate-pulse',
-    responded: 'bg-sage',
-  }[phase]
+    ended: 'bg-mist',
+  }
+
+  const phaseLabel: Record<Phase, string> = {
+    connecting: 'Connecting...',
+    'agent-speaking': 'Agent speaking',
+    listening: 'Listening...',
+    processing: 'Processing...',
+    ended: 'Call ended',
+  }
 
   return (
-    <div className="flex flex-col lg:flex-row gap-10 items-start justify-center">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-espresso/50 backdrop-blur-sm">
+      <div className="bg-cream border border-blush rounded-3xl card-shadow-lg w-full max-w-sm overflow-hidden flex flex-col" style={{ maxHeight: '90vh' }}>
 
-      {/* Phone mockup */}
-      <div className="flex justify-center lg:sticky lg:top-24">
-        <div className="relative w-72">
-          <div className="rounded-[3rem] overflow-hidden border-4 border-bark/30 card-shadow-lg" style={{ height: '580px', background: 'linear-gradient(160deg, #fdf0e0 0%, #f5e0c0 100%)' }}>
-
-            {/* Dynamic island */}
-            <div className="absolute top-4 left-1/2 -translate-x-1/2 w-28 h-7 bg-espresso rounded-full z-20 flex items-center justify-center gap-2">
-              {isRecording && <span className="w-2 h-2 rounded-full bg-terracotta animate-pulse" />}
-              {isPlaying && <span className="w-2 h-2 rounded-full bg-sage animate-pulse" />}
-              {!isRecording && !isPlaying && <span className="w-12 h-1 bg-bark/40 rounded-full" />}
+        {/* Header */}
+        <div className="bg-gradient-to-r from-terracotta to-terra2 px-6 py-5 text-cream">
+          <div className="flex items-center justify-between mb-3">
+            <div className="flex items-center gap-2">
+              <span className={`w-2 h-2 rounded-full ${phaseColor[phase]}`} />
+              <span className="text-xs font-medium text-cream/80">{phaseLabel[phase]}</span>
             </div>
-
-            <div className="absolute inset-0 flex flex-col items-center justify-between p-6 pt-14 pb-8">
-
-              {/* Caller avatar */}
-              <div className="text-center">
-                <div className="w-20 h-20 rounded-full bg-gradient-to-br from-terracotta to-gold mx-auto mb-3 flex items-center justify-center card-shadow">
-                  <span className="font-display text-cream text-2xl font-bold italic">V</span>
-                </div>
-                <p className="font-display text-xl text-espresso">VocalHost Agent</p>
-                <div className="flex items-center justify-center gap-1.5 mt-1">
-                  <span className={`w-1.5 h-1.5 rounded-full ${phaseColor}`} />
-                  <p className="text-warm text-xs">
-                    {phase === 'idle' && 'Ready to assist'}
-                    {phase === 'recording' && 'Recording...'}
-                    {phase === 'processing' && 'Processing...'}
-                    {phase === 'responded' && 'Active call'}
-                  </p>
-                </div>
-              </div>
-
-              {/* Chat bubbles */}
-              <div className="w-full space-y-2 px-1">
-                {!transcript && !aiResponse && (
-                  <p className="text-center text-warm text-xs">{statusText}</p>
-                )}
-                {transcript && (
-                  <div className="flex justify-end">
-                    <div className="bg-terracotta/15 border border-terracotta/25 rounded-2xl rounded-tr-sm px-3 py-2 max-w-[85%]">
-                      <p className="text-espresso text-xs leading-relaxed">{transcript}</p>
-                    </div>
-                  </div>
-                )}
-                {aiResponse && (
-                  <div className="flex justify-start">
-                    <div className="bg-cream border border-blush rounded-2xl rounded-tl-sm px-3 py-2 max-w-[85%] card-shadow">
-                      <p className="text-espresso text-xs leading-relaxed">{aiResponse}</p>
-                    </div>
-                  </div>
-                )}
-                {(transcript || aiResponse) && (
-                  <p className="text-center text-mist text-xs pt-1">{statusText}</p>
-                )}
-              </div>
-
-              {/* Controls */}
-              <div className="flex items-center gap-5">
-                {/* End / reset */}
-                <button
-                  onClick={handleReset}
-                  className="w-12 h-12 rounded-full bg-terracotta/15 border border-terracotta/30 text-terracotta flex items-center justify-center hover:bg-terracotta/25 transition"
-                >
-                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                    <path d="M10.68 13.31a16 16 0 0 0 3.41 2.6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7 2 2 0 0 1 1.72 2v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07A19.42 19.42 0 0 1 4.26 9.6a19.79 19.79 0 0 1-3.07-8.68 2 2 0 0 1 1.99-2.18h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L6.76 6.96" />
-                    <line x1="23" y1="1" x2="1" y2="23" />
-                  </svg>
-                </button>
-
-                {/* Main mic */}
-                <button
-                  onClick={isRecording ? stopRecording : startRecording}
-                  disabled={phase === 'processing' || isPlaying}
-                  className={`w-16 h-16 rounded-full flex items-center justify-center transition-all duration-200 card-shadow ${
-                    isRecording
-                      ? 'bg-terracotta scale-110 shadow-terracotta/30'
-                      : phase === 'processing' || isPlaying
-                      ? 'bg-blush text-mist cursor-not-allowed'
-                      : 'bg-terracotta hover:bg-terra2 hover:scale-105'
-                  }`}
-                >
-                  {isRecording ? (
-                    <span className="w-4 h-4 rounded-sm bg-cream" />
-                  ) : phase === 'processing' ? (
-                    <span className="w-4 h-4 border-2 border-mist border-t-warm rounded-full animate-spin" />
-                  ) : (
-                    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#fdf6ec" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-                      <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/>
-                      <path d="M19 10v2a7 7 0 0 1-14 0v-2"/>
-                      <line x1="12" y1="19" x2="12" y2="23"/>
-                      <line x1="8" y1="23" x2="16" y2="23"/>
-                    </svg>
-                  )}
-                </button>
-
-                {/* Replay */}
-                <button
-                  onClick={() => generateAIResponse()}
-                  disabled={!aiResponse || isPlaying || isRecording}
-                  className={`w-12 h-12 rounded-full flex items-center justify-center transition border ${
-                    !aiResponse || isPlaying || isRecording
-                      ? 'border-blush text-mist cursor-not-allowed'
-                      : 'border-gold/50 text-gold hover:bg-gold/10'
-                  }`}
-                >
-                  {isPlaying ? (
-                    <span className="w-3 h-3 border-2 border-gold border-t-transparent rounded-full animate-spin" />
-                  ) : (
-                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                      <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/>
-                      <path d="M15.54 8.46a5 5 0 0 1 0 7.07"/>
-                    </svg>
-                  )}
-                </button>
-              </div>
-
-            </div>
+            <span className="text-xs font-mono text-cream/70">{formatDuration(callDuration)}</span>
           </div>
-
-          {/* Phone side buttons */}
-          <div className="absolute right-0 top-24 w-1 h-10 bg-bark/20 rounded-l-sm" />
-          <div className="absolute left-0 top-20 w-1 h-8 bg-bark/20 rounded-r-sm" />
-          <div className="absolute left-0 top-32 w-1 h-8 bg-bark/20 rounded-r-sm" />
-        </div>
-      </div>
-
-      {/* Side panel */}
-      <div className="flex-1 max-w-lg space-y-5">
-        <div>
-          <p className="text-warm text-xs uppercase tracking-widest mb-1 font-medium">Guest Experience</p>
-          <h1 className="font-display text-3xl text-espresso">Live Conversation</h1>
-          <p className="text-warm text-sm mt-1">The AI agent handles rescheduling on behalf of the host.</p>
-        </div>
-
-        {/* How it works */}
-        <div className="bg-parchment border border-blush rounded-2xl p-5 card-shadow">
-          <p className="text-xs text-warm uppercase tracking-wider font-medium mb-4">How it works</p>
-          <div className="space-y-4">
-            {[
-              { step: '1', label: 'Speak', desc: 'Tap the microphone and say your message as a guest caller', color: 'bg-terracotta/15 text-terracotta' },
-              { step: '2', label: 'Transcribe', desc: 'Your speech is converted to text via Gradium STT', color: 'bg-gold/15 text-gold' },
-              { step: '3', label: 'Agent replies', desc: 'VocalHost checks bookings and responds via voice', color: 'bg-sage/15 text-sage' },
-            ].map(s => (
-              <div key={s.step} className="flex gap-3 items-start">
-                <span className={`w-7 h-7 rounded-full text-xs flex items-center justify-center shrink-0 font-semibold ${s.color}`}>{s.step}</span>
-                <div>
-                  <p className="text-espresso text-sm font-semibold">{s.label}</p>
-                  <p className="text-warm text-xs mt-0.5">{s.desc}</p>
-                </div>
-              </div>
-            ))}
+          <div className="flex items-center gap-3">
+            <div className="w-12 h-12 rounded-full bg-cream/20 flex items-center justify-center">
+              <span className="font-display text-cream text-xl font-bold italic">V</span>
+            </div>
+            <div>
+              <p className="font-display text-lg leading-tight">VocalHost Agent</p>
+              <p className="text-cream/70 text-xs">calling {context.guest_name}</p>
+            </div>
           </div>
         </div>
 
-        {/* Live transcript */}
-        {(transcript || aiResponse) && (
-          <div className="bg-parchment border border-blush rounded-2xl overflow-hidden card-shadow">
-            <div className="px-5 py-3 border-b border-blush bg-blush/30">
-              <p className="text-xs text-warm uppercase tracking-wider font-medium">Conversation</p>
+        {/* Conversation */}
+        <div className="flex-1 overflow-y-auto p-4 space-y-3 min-h-0">
+          {messages.length === 0 && (
+            <div className="flex justify-center items-center h-24">
+              <div className="flex gap-1.5">
+                {[0, 1, 2].map(i => (
+                  <div key={i} className="w-2 h-2 rounded-full bg-terracotta animate-bounce" style={{ animationDelay: `${i * 0.15}s` }} />
+                ))}
+              </div>
             </div>
-            <div className="p-5 space-y-4">
-              {transcript && (
-                <div>
-                  <p className="text-xs text-warm font-medium mb-1.5">Guest</p>
-                  <div className="bg-terracotta/10 border border-terracotta/20 rounded-xl px-4 py-3">
-                    <p className="text-espresso text-sm leading-relaxed">{transcript}</p>
-                  </div>
-                </div>
-              )}
-              {aiResponse && (
-                <div>
-                  <p className="text-xs text-warm font-medium mb-1.5">VocalHost Agent</p>
-                  <div className="bg-cream border border-blush rounded-xl px-4 py-3 card-shadow">
-                    <p className="text-espresso text-sm leading-relaxed">{aiResponse}</p>
-                  </div>
-                </div>
+          )}
+          {messages.map((m, i) => (
+            <div key={i} className={`flex ${m.role === 'guest' ? 'justify-end' : 'justify-start'}`}>
+              <div className={`max-w-[80%] rounded-2xl px-3 py-2 text-sm leading-relaxed ${
+                m.role === 'guest'
+                  ? 'bg-terracotta/15 border border-terracotta/25 text-espresso rounded-tr-sm'
+                  : 'bg-parchment border border-blush text-espresso rounded-tl-sm card-shadow'
+              }`}>
+                <p className={`text-xs font-medium mb-1 ${m.role === 'guest' ? 'text-terracotta' : 'text-warm'}`}>
+                  {m.role === 'guest' ? context.guest_name : 'VocalHost Agent'}
+                </p>
+                {m.text}
+              </div>
+            </div>
+          ))}
+        </div>
+
+        {/* Status + controls */}
+        <div className="border-t border-blush px-4 py-4 bg-parchment/50">
+          <p className="text-center text-warm text-xs mb-4">{statusText}</p>
+          <div className="flex items-center justify-center gap-6">
+
+            {/* Manual stop recording */}
+            <button
+              onClick={handleManualStop}
+              disabled={phase !== 'listening'}
+              className={`w-12 h-12 rounded-full border flex items-center justify-center transition ${
+                phase === 'listening'
+                  ? 'border-terracotta/50 text-terracotta hover:bg-terracotta/10'
+                  : 'border-blush text-mist cursor-not-allowed'
+              }`}
+              title="Send now"
+            >
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
+                <rect x="6" y="6" width="12" height="12" rx="2" />
+              </svg>
+            </button>
+
+            {/* Mic indicator (not interactive — auto-managed) */}
+            <div className={`w-16 h-16 rounded-full flex items-center justify-center card-shadow ${
+              phase === 'listening' ? 'bg-terracotta' : phase === 'agent-speaking' ? 'bg-sage' : 'bg-blush'
+            }`}>
+              {phase === 'listening' ? (
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#fdf6ec" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/>
+                  <path d="M19 10v2a7 7 0 0 1-14 0v-2"/>
+                  <line x1="12" y1="19" x2="12" y2="23"/>
+                  <line x1="8" y1="23" x2="16" y2="23"/>
+                </svg>
+              ) : phase === 'agent-speaking' ? (
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#fdf6ec" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                  <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/>
+                  <path d="M15.54 8.46a5 5 0 0 1 0 7.07"/>
+                  <path d="M19.07 4.93a10 10 0 0 1 0 14.14"/>
+                </svg>
+              ) : phase === 'ended' ? (
+                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#8a6545" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M10.68 13.31a16 16 0 0 0 3.41 2.6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7 2 2 0 0 1 1.72 2v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07A19.42 19.42 0 0 1 4.26 9.6a19.79 19.79 0 0 1-3.07-8.68 2 2 0 0 1 1.99-2.18h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L6.76 6.96"/><line x1="23" y1="1" x2="1" y2="23"/>
+                </svg>
+              ) : (
+                <span className="w-5 h-5 border-2 border-mist border-t-warm rounded-full animate-spin" />
               )}
             </div>
-          </div>
-        )}
 
-        {/* Status indicator */}
-        <div className="flex items-center gap-2">
-          <span className={`w-2 h-2 rounded-full shrink-0 ${phaseColor}`} />
-          <p className="text-warm text-sm">{statusText}</p>
+            {/* End call */}
+            <button
+              onClick={() => endCall().then(onClose)}
+              className="w-12 h-12 rounded-full bg-terracotta/15 border border-terracotta/30 text-terracotta flex items-center justify-center hover:bg-terracotta/25 transition"
+              title="End call"
+            >
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M10.68 13.31a16 16 0 0 0 3.41 2.6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7 2 2 0 0 1 1.72 2v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07A19.42 19.42 0 0 1 4.26 9.6a19.79 19.79 0 0 1-3.07-8.68 2 2 0 0 1 1.99-2.18h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L6.76 6.96"/>
+                <line x1="23" y1="1" x2="1" y2="23"/>
+              </svg>
+            </button>
+          </div>
+
+          {phase === 'ended' && (
+            <button
+              onClick={onClose}
+              className="mt-4 w-full py-2.5 bg-terracotta text-cream rounded-xl text-sm font-semibold hover:bg-terra2 transition"
+            >
+              Close
+            </button>
+          )}
         </div>
       </div>
     </div>

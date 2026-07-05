@@ -126,7 +126,8 @@ def update_booking_time(booking_id: str, new_session_id: str) -> dict:
 
     # --- recalculate statuses ---
     def _status(sess):
-        if sess["current_pax"] >= sess["min_pax"] * 2:
+        max_pax = sess.get("max_pax", sess["min_pax"] * 2)
+        if sess["current_pax"] >= max_pax:
             return "full"
         elif sess["current_pax"] >= sess["min_pax"]:
             return "confirmed"

@@ -49,6 +49,7 @@ class Session(BaseModel):
     time: str
     current_pax: int
     min_pax: int
+    max_pax: int = 0
     status: str  # "warning", "confirmed", "full"
 
 class Workshop(BaseModel):
