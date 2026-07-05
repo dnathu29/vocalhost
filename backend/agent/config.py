@@ -30,8 +30,8 @@ VULTR_BASE_URL = "https://api.vultrinference.com/v1"
 
 # Default model — override via VULTR_MODEL_ID in .env
 # Using the normalizer proxy for robust tool-call parsing
-DEFAULT_MODEL = "deepseek-ai/DeepSeek-V3-0324"
-
+# DEFAULT_MODEL = "deepseek-ai/DeepSeek-V3-0324"
+DEFAULT_MODEL = "meta-llama/Llama-3.1-8B-Instruct"
 
 def get_vultr_api_key() -> str:
     global VULTR_API_KEY

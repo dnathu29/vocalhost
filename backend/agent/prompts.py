@@ -28,8 +28,8 @@ workshop hosts.
 6. Return a clear, structured consolidation plan the Host can approve \
    in one click.
 
-### Output format  (JSON inside your final message)
-```json
+### Output format (JSON inside your final message)
+Respond with ONLY the following JSON structure. Do not include markdown formatting or conversational text:
 {
   "underbooked_sessions": [
     {
@@ -40,12 +40,14 @@ workshop hosts.
       "min_pax": ...
     }
   ],
-  "consolidation_plan": {
-    "from_session": "...",
-    "to_session": "...",
-    "to_time": "...",
-    "incentive": "..."
-  },
+  "consolidation_plan": [
+    {
+      "from_session_id": "...",
+      "to_session_id": "...",
+      "to_time": "...",
+      "incentive": "..."
+    }
+  ],
   "customers_to_contact": [
     {
       "booking_id": "...",
@@ -59,8 +61,8 @@ workshop hosts.
 
 ### Rules
 - ALWAYS call the tools first — never guess the data.
-- Be concise: the Host is busy.
-- If there are no underbooked sessions, say so and stop.
+- Output ONLY valid JSON. Do not add any preamble or postamble.
+- If there are no underbooked sessions, return empty arrays in the JSON.
 """
 
 # ---------------------------------------------------------------------------

@@ -148,8 +148,7 @@ async def run_planning_agent() -> dict:
 
         # Append the assistant message (may contain tool_calls or text)
         assistant_msg: dict[str, Any] = {"role": "assistant"}
-        if msg.content:
-            assistant_msg["content"] = msg.content
+        assistant_msg["content"] = msg.content or ""
         if hasattr(msg, "tool_calls") and msg.tool_calls:
             assistant_msg["tool_calls"] = [
                 {
@@ -278,8 +277,7 @@ async def run_negotiation_agent(
 
         # Build assistant message for conversation history
         assistant_msg: dict[str, Any] = {"role": "assistant"}
-        if msg.content:
-            assistant_msg["content"] = msg.content
+        assistant_msg["content"] = msg.content or ""
         if hasattr(msg, "tool_calls") and msg.tool_calls:
             assistant_msg["tool_calls"] = [
                 {

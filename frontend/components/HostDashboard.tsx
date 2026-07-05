@@ -148,9 +148,9 @@ export default function HostDashboard() {
       const res = await axios.post(`${API_BASE}/api/run-agent`)
       setAgentPlan(res.data); fetchSessions(); setApiOnline(true)
       setApprovedMoves([]); setCalledGuests([])
-    } catch {
+    } catch (error: any) {
       setApiOnline(false)
-      setAgentError('Backend offline. Showing last known sessions.')
+      setAgentError(error.response?.data?.detail || 'Backend offline. Showing last known sessions.')
     } finally { setAgentRunning(false) }
   }
 
@@ -214,7 +214,7 @@ export default function HostDashboard() {
   if (loading) return (
     <div className="flex items-center justify-center h-64">
       <div className="flex gap-1.5">
-        {[0,1,2].map(i => (
+        {[0, 1, 2].map(i => (
           <div key={i} className="w-2.5 h-2.5 rounded-full bg-terracotta animate-bounce" style={{ animationDelay: `${i * 0.15}s` }} />
         ))}
       </div>
@@ -231,9 +231,8 @@ export default function HostDashboard() {
           <h1 className="font-display text-4xl text-espresso">Workshop Sessions</h1>
           <p className="text-warm text-sm mt-1">Monitor bookings and let your AI agent handle the rest.</p>
         </div>
-        <span className={`self-start sm:self-auto inline-flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-full border font-medium ${
-          apiOnline ? 'border-sage/40 text-sage bg-sage/10' : 'border-terracotta/40 text-terracotta bg-terracotta/10'
-        }`}>
+        <span className={`self-start sm:self-auto inline-flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-full border font-medium ${apiOnline ? 'border-sage/40 text-sage bg-sage/10' : 'border-terracotta/40 text-terracotta bg-terracotta/10'
+          }`}>
           <span className={`w-1.5 h-1.5 rounded-full ${apiOnline ? 'bg-sage animate-pulse' : 'bg-terracotta'}`} />
           {apiOnline ? 'Connected' : 'Offline'}
         </span>
@@ -270,9 +269,8 @@ export default function HostDashboard() {
           <button
             onClick={handleRunAgent}
             disabled={agentRunning}
-            className={`px-6 py-2.5 rounded-xl text-sm font-semibold transition flex items-center gap-2 ${
-              agentRunning ? 'bg-white/20 text-cream/60 cursor-not-allowed' : 'bg-espresso text-cream hover:bg-bark'
-            }`}
+            className={`px-6 py-2.5 rounded-xl text-sm font-semibold transition flex items-center gap-2 ${agentRunning ? 'bg-white/20 text-cream/60 cursor-not-allowed' : 'bg-espresso text-cream hover:bg-bark'
+              }`}
           >
             {agentRunning ? (
               <><span className="w-3.5 h-3.5 border-2 border-cream/40 border-t-cream rounded-full animate-spin" /> Analyzing...</>
@@ -314,11 +312,10 @@ export default function HostDashboard() {
                       <p className="text-gold text-xs mt-0.5">{item.from_time} → {item.to_time || '?'}</p>
                       <button
                         onClick={() => handleApproveMove(item.from_session_id)}
-                        className={`mt-2 text-xs px-3 py-1 rounded-lg font-medium transition ${
-                          approvedMoves.includes(item.from_session_id)
+                        className={`mt-2 text-xs px-3 py-1 rounded-lg font-medium transition ${approvedMoves.includes(item.from_session_id)
                             ? 'bg-sage text-cream'
                             : 'bg-espresso text-cream hover:bg-bark'
-                        }`}
+                          }`}
                       >
                         {approvedMoves.includes(item.from_session_id) ? '✓ Approved' : 'Approve'}
                       </button>
@@ -340,11 +337,10 @@ export default function HostDashboard() {
                       </div>
                       <button
                         onClick={() => handleCallGuest(guest.booking_id, guest.guest_name)}
-                        className={`text-xs px-3 py-1.5 rounded-lg font-medium transition ${
-                          calledGuests.includes(guest.booking_id)
+                        className={`text-xs px-3 py-1.5 rounded-lg font-medium transition ${calledGuests.includes(guest.booking_id)
                             ? 'bg-sage/20 text-sage'
                             : 'bg-terracotta text-cream hover:bg-terra2'
-                        }`}
+                          }`}
                       >
                         {calledGuests.includes(guest.booking_id) ? 'Called ✓' : 'Call'}
                       </button>
