@@ -11,6 +11,16 @@ import json
 import os
 from pathlib import Path
 
+# Load environment variables from backend/.env (GRADIUM_API_KEY, etc.)
+try:
+    from dotenv import load_dotenv
+    load_dotenv(Path(__file__).parent / ".env")
+except ImportError:
+    pass
+
+# Voice service (Member 2 — The Voice / Gradium)
+from voice import GradiumError, audio_to_text, text_to_audio_base64
+
 # Initialize FastAPI
 app = FastAPI(
     title="VocalHost API",
@@ -53,6 +63,15 @@ class Booking(BaseModel):
 class Database(BaseModel):
     workshops: List[Workshop]
     bookings: List[Booking]
+
+# --- Voice request models (Member 2) ---
+
+class TTSRequest(BaseModel):
+    text: str
+    voice_id: Optional[str] = None
+
+class STTRequest(BaseModel):
+    audio_data: str  # base64-encoded recording from the browser
 
 # ============================================================================
 # DATABASE HELPERS
@@ -151,30 +170,53 @@ async def run_agent():
 # ============================================================================
 
 @app.post("/api/tts")
-async def text_to_speech(text: str):
+async def text_to_speech(req: TTSRequest):
     """
-    Convert text to speech using Gradium API.
-    
-    TODO: Member 2 implements TTS here
+    Convert text to speech using Gradium TTS.
+
+    Request body: {"text": "...", "voice_id": "optional"}
+    Response: {"status": "success", "audio": "<base64 WAV>", "format": "wav"}
+    The frontend plays it as a data URI: data:audio/wav;base64,<audio>.
     """
-    return {
-        "status": "pending",
-        "message": "TTS not yet implemented",
-        "audio": None
-    }
+    import asyncio
+
+    if not req.text or not req.text.strip():
+        raise HTTPException(status_code=400, detail="`text` must not be empty")
+
+    try:
+        # text_to_audio_base64 is a blocking HTTP call — run it off the event loop.
+        audio_b64 = await asyncio.to_thread(
+            text_to_audio_base64, req.text, req.voice_id
+        )
+    except GradiumError as e:
+        raise HTTPException(status_code=502, detail=f"Gradium TTS failed: {e}")
+
+    return {"status": "success", "audio": audio_b64, "format": "wav"}
 
 @app.post("/api/stt")
-async def speech_to_text(audio_data: str):
+async def speech_to_text(req: STTRequest):
     """
-    Convert speech to text using Gradium API.
-    
-    TODO: Member 2 implements STT here
+    Convert recorded speech to text using Gradium STT.
+
+    Request body: {"audio_data": "<base64 recording from MediaRecorder>"}
+    Response: {"status": "success", "text": "<transcript>"}
     """
-    return {
-        "status": "pending",
-        "message": "STT not yet implemented",
-        "text": None
-    }
+    import base64
+
+    if not req.audio_data:
+        raise HTTPException(status_code=400, detail="`audio_data` must not be empty")
+
+    try:
+        audio_bytes = base64.b64decode(req.audio_data)
+    except Exception:
+        raise HTTPException(status_code=400, detail="`audio_data` is not valid base64")
+
+    try:
+        transcript = await audio_to_text(audio_bytes)
+    except GradiumError as e:
+        raise HTTPException(status_code=502, detail=f"Gradium STT failed: {e}")
+
+    return {"status": "success", "text": transcript}
 
 # ============================================================================
 # STARTUP/SHUTDOWN
