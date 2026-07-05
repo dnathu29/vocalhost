@@ -254,8 +254,7 @@ async def run_negotiation_agent(
         _conversations[booking_id] = [
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": (
-                "[SYSTEM] The call has just connected. "
-                "Greet the guest and make your offer."
+"The guest has picked up the phone. Begin the call naturally."
             )},
         ]
     else:
