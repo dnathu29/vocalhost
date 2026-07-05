@@ -8,9 +8,18 @@ const config: Config = {
   theme: {
     extend: {
       colors: {
-        primary: '#7c3aed',
-        warning: '#dc2626',
-        success: '#16a34a',
+        clay:    '#c4a882',
+        ember:   '#e07a5f',
+        sage:    '#7a9e7e',
+        ink:     '#0f0e0d',
+        parchment: '#f0ece4',
+        canvas:  '#1a1814',
+        surface: '#242019',
+        muted:   '#6b6355',
+      },
+      fontFamily: {
+        display: ['Playfair Display', 'serif'],
+        sans: ['Inter', 'sans-serif'],
       },
     },
   },

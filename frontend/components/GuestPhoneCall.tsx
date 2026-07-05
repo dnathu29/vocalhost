@@ -10,8 +10,9 @@ export default function GuestPhoneCall() {
   const [transcript, setTranscript] = useState('')
   const [aiResponse, setAiResponse] = useState('')
   const [isPlaying, setIsPlaying] = useState(false)
-  const [statusText, setStatusText] = useState('Start by clicking the microphone button...')
-  
+  const [statusText, setStatusText] = useState('Tap the mic to speak with the agent')
+  const [phase, setPhase] = useState<'idle' | 'recording' | 'processing' | 'responded'>('idle')
+
   const mediaRecorderRef = useRef<MediaRecorder | null>(null)
   const audioChunksRef = useRef<Blob[]>([])
 
@@ -19,27 +20,24 @@ export default function GuestPhoneCall() {
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
       const mediaRecorder = new MediaRecorder(stream)
-      
+
       mediaRecorderRef.current = mediaRecorder
       audioChunksRef.current = []
 
-      mediaRecorder.ondataavailable = (event) => {
-        audioChunksRef.current.push(event.data)
-      }
-
+      mediaRecorder.ondataavailable = (event) => { audioChunksRef.current.push(event.data) }
       mediaRecorder.onstop = async () => {
         const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' })
         await processAudio(audioBlob)
-        stream.getTracks().forEach((track) => track.stop())
+        stream.getTracks().forEach(t => t.stop())
       }
 
       mediaRecorder.start()
       setIsRecording(true)
-      setStatusText('Recording... click stop when done.')
-    } catch (error) {
-      console.error('Error accessing microphone:', error)
+      setPhase('recording')
+      setStatusText('Listening...')
+    } catch {
       alert('Please enable microphone access')
-      setStatusText('Microphone permission is required to continue.')
+      setStatusText('Microphone permission required.')
     }
   }
 
@@ -47,57 +45,50 @@ export default function GuestPhoneCall() {
     if (mediaRecorderRef.current) {
       mediaRecorderRef.current.stop()
       setIsRecording(false)
-      setStatusText('Processing your audio...')
+      setPhase('processing')
+      setStatusText('Transcribing...')
     }
   }
 
-  const blobToBase64 = async (audioBlob: Blob): Promise<string> => {
-    return new Promise((resolve, reject) => {
+  const blobToBase64 = (audioBlob: Blob): Promise<string> =>
+    new Promise((resolve, reject) => {
       const reader = new FileReader()
       reader.onloadend = () => {
-        const result = reader.result?.toString() || ''
-        const encoded = result.split(',')[1]
-        if (!encoded) {
-          reject(new Error('Failed to encode audio'))
-          return
-        }
-        resolve(encoded)
+        const encoded = reader.result?.toString().split(',')[1]
+        encoded ? resolve(encoded) : reject(new Error('Failed to encode audio'))
       }
       reader.onerror = () => reject(reader.error)
       reader.readAsDataURL(audioBlob)
     })
-  }
 
   const processAudio = async (audioBlob: Blob) => {
     try {
-      setStatusText('Uploading audio for transcription...')
+      setStatusText('Transcribing your voice...')
       const base64Audio = await blobToBase64(audioBlob)
-
-      const res = await axios.post(
-        `${API_BASE}/api/stt`,
-        { audio_data: base64Audio },
-        { headers: { 'Content-Type': 'application/json' } }
-      )
-
-      const text = res.data.text || 'No response from STT'
-      setTranscript(text)
-      setStatusText('Transcript ready. Press speaker for AI reply.')
-    } catch (error) {
-      console.error('Error processing audio:', error)
+      const res = await axios.post(`${API_BASE}/api/stt`, { audio_data: base64Audio })
+      const text = res.data.text || ''
+      setTranscript(text || 'Could not transcribe audio')
+      if (text) {
+        await generateAIResponse(text)
+      } else {
+        setStatusText('Could not hear you clearly. Try again.')
+        setPhase('idle')
+      }
+    } catch {
       const fallback = 'Can I move to the 16:00 session instead?'
       setTranscript(fallback)
-      setStatusText('Backend unavailable. Using demo transcript.')
+      setStatusText('Using demo transcript...')
+      await generateAIResponse(fallback)
     }
   }
 
-  const generateAIResponse = async () => {
-    if (!transcript) return
-
+  const generateAIResponse = async (guestText?: string) => {
+    const input = guestText ?? transcript
+    if (!input) return
     try {
       setStatusText('Agent is thinking...')
       const agentRes = await axios.post(`${API_BASE}/api/run-agent`)
       const plan = agentRes.data
-
       let responseText: string
       const contact = plan.customers_to_contact?.[0]
       const planItem = plan.consolidation_plan?.[0]
@@ -109,144 +100,229 @@ export default function GuestPhoneCall() {
       } else {
         responseText = 'All sessions are confirmed — no changes needed. Have a great day!'
       }
-
       setAiResponse(responseText)
-      setStatusText('Agent response generated. Playing audio...')
+      setPhase('responded')
       await playTextToSpeech(responseText)
-    } catch (error) {
-      console.error('Error generating response:', error)
-      setStatusText('Could not reach booking system. Try again.')
+    } catch {
+      setStatusText('Could not reach booking system.')
+      setPhase('idle')
     }
   }
 
   const playTextToSpeech = async (text: string) => {
     setIsPlaying(true)
+    setStatusText('Agent speaking...')
     try {
-      const res = await axios.post(
-        `${API_BASE}/api/tts`,
-        { text },
-        { headers: { 'Content-Type': 'application/json' } }
-      )
-      
+      const res = await axios.post(`${API_BASE}/api/tts`, { text })
       if (res.data.audio) {
         const format = res.data.format || 'wav'
         const audio = new Audio(`data:audio/${format};base64,${res.data.audio}`)
         audio.play()
         audio.onended = () => {
           setIsPlaying(false)
-          setStatusText('Call step complete. Record another message to continue.')
+          setStatusText('Tap mic to respond')
         }
       } else {
         setIsPlaying(false)
-        setStatusText('TTS returned no audio.')
+        setStatusText('Tap mic to respond')
       }
-    } catch (error) {
-      console.error('Error playing TTS:', error)
+    } catch {
       setIsPlaying(false)
-      setStatusText('TTS service unavailable. Displaying text only.')
+      setStatusText('(Audio unavailable — text shown above)')
     }
   }
 
+  const handleReset = () => {
+    setTranscript('')
+    setAiResponse('')
+    setPhase('idle')
+    setStatusText('Tap the mic to speak with the agent')
+  }
+
   return (
-    <div className="space-y-8">
-      {/* Phone Frame */}
-      <div className="flex justify-center">
-        <div className="w-96 h-screen max-h-96 bg-black rounded-3xl shadow-2xl p-3 relative">
-          {/* Notch */}
-          <div className="absolute top-0 left-1/2 transform -translate-x-1/2 bg-black rounded-b-3xl w-40 h-7 z-10"></div>
-          
-          {/* Phone Content */}
-          <div className="w-full h-full bg-gradient-to-b from-blue-500 to-blue-600 rounded-2xl flex flex-col items-center justify-center p-6 text-white">
-            <div className="text-center mb-8">
-              <h2 className="text-3xl font-bold mb-2">Incoming Call</h2>
-              <p className="text-xl">VocalHost Agent</p>
-              <p className="text-sm opacity-75 mt-2">00:45</p>
+    <div className="flex flex-col lg:flex-row gap-8 items-start justify-center">
+
+      {/* Phone mockup */}
+      <div className="flex justify-center lg:sticky lg:top-24">
+        <div className="relative w-72">
+          {/* Outer shell */}
+          <div className="bg-gradient-to-b from-[#1c1c1e] to-[#111] rounded-[3rem] shadow-2xl border border-white/10 overflow-hidden" style={{ height: '580px' }}>
+            {/* Dynamic island */}
+            <div className="absolute top-4 left-1/2 -translate-x-1/2 w-28 h-7 bg-black rounded-full z-20 flex items-center justify-center gap-2">
+              {isRecording && <span className="w-2 h-2 rounded-full bg-ember animate-pulse" />}
+              {isPlaying && <span className="w-2 h-2 rounded-full bg-sage animate-pulse" />}
             </div>
 
-            {/* Call Status */}
-            <div className="bg-white bg-opacity-20 rounded-lg p-4 w-full mb-8 min-h-24">
+            {/* Screen */}
+            <div className="absolute inset-0 bg-gradient-to-b from-[#1a1207] via-[#0f0e0d] to-[#0a0a0a] flex flex-col items-center justify-between p-6 pt-14 pb-8">
+
+              {/* Caller info */}
+              <div className="text-center">
+                <div className="w-16 h-16 rounded-full bg-gradient-to-br from-clay to-ember mx-auto mb-3 flex items-center justify-center">
+                  <span className="font-display text-ink text-xl font-bold">V</span>
+                </div>
+                <p className="text-parchment font-display text-xl">VocalHost Agent</p>
+                <p className="text-muted text-xs mt-1">
+                  {phase === 'idle' && 'Ready'}
+                  {phase === 'recording' && 'Recording...'}
+                  {phase === 'processing' && 'Processing...'}
+                  {phase === 'responded' && 'Active call'}
+                </p>
+              </div>
+
+              {/* Conversation bubble */}
+              <div className="w-full space-y-3">
+                {transcript && (
+                  <div className="flex justify-end">
+                    <div className="bg-clay/20 border border-clay/30 rounded-2xl rounded-tr-sm px-3 py-2 max-w-[85%]">
+                      <p className="text-parchment text-xs">{transcript}</p>
+                    </div>
+                  </div>
+                )}
+                {aiResponse && (
+                  <div className="flex justify-start">
+                    <div className="bg-surface border border-white/10 rounded-2xl rounded-tl-sm px-3 py-2 max-w-[85%]">
+                      <p className="text-parchment text-xs">{aiResponse}</p>
+                    </div>
+                  </div>
+                )}
+                {!transcript && !aiResponse && (
+                  <div className="text-center">
+                    <p className="text-muted text-xs">{statusText}</p>
+                  </div>
+                )}
+                {(transcript || aiResponse) && (
+                  <p className="text-muted text-xs text-center">{statusText}</p>
+                )}
+              </div>
+
+              {/* Controls */}
+              <div className="flex items-center gap-5">
+                {/* Reset / end call */}
+                <button
+                  onClick={handleReset}
+                  className="w-12 h-12 rounded-full bg-ember/20 border border-ember/30 text-ember flex items-center justify-center hover:bg-ember/30 transition"
+                >
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M10.68 13.31a16 16 0 0 0 3.41 2.6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7 2 2 0 0 1 1.72 2v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07A19.42 19.42 0 0 1 4.26 9.6a19.79 19.79 0 0 1-3.07-8.68 2 2 0 0 1 1.99-2.18h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L6.76 6.96" />
+                    <line x1="23" y1="1" x2="1" y2="23" />
+                  </svg>
+                </button>
+
+                {/* Mic — main CTA */}
+                <button
+                  onClick={isRecording ? stopRecording : startRecording}
+                  disabled={phase === 'processing' || isPlaying}
+                  className={`w-16 h-16 rounded-full flex items-center justify-center transition-all duration-200 ${
+                    isRecording
+                      ? 'bg-ember shadow-lg shadow-ember/30 scale-110'
+                      : phase === 'processing' || isPlaying
+                      ? 'bg-white/10 text-muted cursor-not-allowed'
+                      : 'bg-clay shadow-lg shadow-clay/20 hover:scale-105'
+                  }`}
+                >
+                  {isRecording ? (
+                    <span className="w-4 h-4 rounded-sm bg-ink" />
+                  ) : phase === 'processing' ? (
+                    <span className="w-4 h-4 border-2 border-muted border-t-transparent rounded-full animate-spin" />
+                  ) : (
+                    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#0f0e0d" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                      <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/>
+                      <path d="M19 10v2a7 7 0 0 1-14 0v-2"/>
+                      <line x1="12" y1="19" x2="12" y2="23"/>
+                      <line x1="8" y1="23" x2="16" y2="23"/>
+                    </svg>
+                  )}
+                </button>
+
+                {/* Speaker replay */}
+                <button
+                  onClick={() => generateAIResponse()}
+                  disabled={!aiResponse || isPlaying || isRecording}
+                  className={`w-12 h-12 rounded-full flex items-center justify-center transition border ${
+                    !aiResponse || isPlaying || isRecording
+                      ? 'border-white/10 text-muted cursor-not-allowed'
+                      : 'border-clay/40 text-clay hover:bg-clay/10'
+                  }`}
+                >
+                  {isPlaying ? (
+                    <span className="w-3 h-3 border-2 border-clay border-t-transparent rounded-full animate-spin" />
+                  ) : (
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                      <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/>
+                      <path d="M15.54 8.46a5 5 0 0 1 0 7.07"/>
+                      <path d="M19.07 4.93a10 10 0 0 1 0 14.14"/>
+                    </svg>
+                  )}
+                </button>
+              </div>
+
+            </div>
+          </div>
+
+          {/* Side buttons */}
+          <div className="absolute right-0 top-24 w-1 h-10 bg-white/10 rounded-l-sm" />
+          <div className="absolute left-0 top-20 w-1 h-8 bg-white/10 rounded-r-sm" />
+          <div className="absolute left-0 top-32 w-1 h-8 bg-white/10 rounded-r-sm" />
+        </div>
+      </div>
+
+      {/* Conversation log panel */}
+      <div className="flex-1 max-w-lg space-y-4">
+        <div>
+          <p className="text-muted text-xs uppercase tracking-widest mb-1">Guest Call</p>
+          <h1 className="font-display text-3xl text-parchment">Live Conversation</h1>
+          <p className="text-muted text-sm mt-1">The AI agent handles rescheduling on behalf of the host.</p>
+        </div>
+
+        {/* How it works */}
+        <div className="bg-surface border border-white/8 rounded-2xl p-5 space-y-3">
+          {[
+            { step: '1', label: 'Tap mic', desc: 'Record your message as a guest caller' },
+            { step: '2', label: 'Transcribe', desc: 'Your speech is converted to text via Gradium STT' },
+            { step: '3', label: 'Agent replies', desc: 'VocalHost checks bookings and responds via TTS' },
+          ].map(s => (
+            <div key={s.step} className="flex gap-3 items-start">
+              <span className="w-6 h-6 rounded-full bg-clay/20 text-clay text-xs flex items-center justify-center shrink-0 mt-0.5">{s.step}</span>
+              <div>
+                <p className="text-parchment text-sm font-medium">{s.label}</p>
+                <p className="text-muted text-xs">{s.desc}</p>
+              </div>
+            </div>
+          ))}
+        </div>
+
+        {/* Live transcript */}
+        {(transcript || aiResponse) && (
+          <div className="bg-surface border border-white/8 rounded-2xl overflow-hidden">
+            <div className="px-5 py-3 border-b border-white/8">
+              <p className="text-xs text-muted uppercase tracking-wider">Transcript</p>
+            </div>
+            <div className="p-5 space-y-3">
               {transcript && (
-                <div className="mb-4">
-                  <p className="text-sm opacity-75">You said:</p>
-                  <p className="text-lg font-semibold">{transcript}</p>
+                <div>
+                  <p className="text-xs text-muted mb-1">Guest</p>
+                  <p className="text-parchment text-sm bg-clay/10 rounded-xl px-4 py-3">{transcript}</p>
                 </div>
               )}
               {aiResponse && (
                 <div>
-                  <p className="text-sm opacity-75">Agent says:</p>
-                  <p className="text-lg font-semibold">{aiResponse}</p>
+                  <p className="text-xs text-muted mb-1">VocalHost Agent</p>
+                  <p className="text-parchment text-sm bg-white/5 rounded-xl px-4 py-3">{aiResponse}</p>
                 </div>
               )}
-              {!transcript && !aiResponse && (
-                <p className="text-center opacity-75">{statusText}</p>
-              )}
-              {(transcript || aiResponse) && (
-                <p className="text-xs opacity-70 mt-4">{statusText}</p>
-              )}
             </div>
-
-            {/* Controls */}
-            <div className="flex gap-4 justify-center">
-              <button
-                onClick={isRecording ? stopRecording : startRecording}
-                className={`w-16 h-16 rounded-full flex items-center justify-center text-2xl transition transform hover:scale-110 ${
-                  isRecording
-                    ? 'bg-red-500 shadow-lg shadow-red-400'
-                    : 'bg-green-500 shadow-lg shadow-green-400'
-                }`}
-                aria-label={isRecording ? 'Stop recording' : 'Start recording'}
-              >
-                {isRecording ? '⏹️' : '🎤'}
-              </button>
-
-              <button
-                onClick={generateAIResponse}
-                disabled={!transcript || isPlaying}
-                className={`w-16 h-16 rounded-full flex items-center justify-center text-2xl transition transform hover:scale-110 ${
-                  isPlaying || !transcript
-                    ? 'bg-gray-400'
-                    : 'bg-purple-500 shadow-lg shadow-purple-400'
-                }`}
-                aria-label="Play AI response"
-              >
-                {isPlaying ? '⏳' : '🔊'}
-              </button>
-
-              <button
-                onClick={() => { setTranscript(''); setAiResponse(''); setStatusText('Ready.') }}
-                className="w-16 h-16 rounded-full flex items-center justify-center text-2xl bg-red-600 shadow-lg shadow-red-400 hover:scale-110 transition transform"
-                aria-label="Clear"
-              >
-                ❌
-              </button>
-            </div>
-
-            {/* Accept Call Info */}
-            <p className="text-xs opacity-50 mt-8">Slide up to answer</p>
           </div>
-        </div>
-      </div>
+        )}
 
-      {/* Debug Panel */}
-      <div className="bg-white rounded-lg shadow-lg p-6">
-        <h3 className="text-2xl font-bold mb-4">Debug Panel</h3>
-        <div className="grid grid-cols-2 gap-4">
-          <div className="bg-gray-100 p-4 rounded">
-            <p className="text-sm text-gray-600">Recording Status:</p>
-            <p className="font-bold">{isRecording ? '🔴 RECORDING' : '⚫ IDLE'}</p>
-          </div>
-          <div className="bg-gray-100 p-4 rounded">
-            <p className="text-sm text-gray-600">Playing Audio:</p>
-            <p className="font-bold">{isPlaying ? '🔊 YES' : '🔇 NO'}</p>
-          </div>
-          <div className="bg-gray-100 p-4 rounded col-span-2">
-            <p className="text-sm text-gray-600">Transcript:</p>
-            <p className="font-mono text-sm">{transcript || '(empty)'}</p>
-          </div>
-          <div className="bg-gray-100 p-4 rounded col-span-2">
-            <p className="text-sm text-gray-600">AI Response:</p>
-            <p className="font-mono text-sm">{aiResponse || '(empty)'}</p>
-          </div>
+        {/* Status */}
+        <div className="flex items-center gap-2">
+          <span className={`w-2 h-2 rounded-full ${
+            phase === 'recording' ? 'bg-ember animate-pulse' :
+            phase === 'processing' ? 'bg-clay animate-pulse' :
+            phase === 'responded' ? 'bg-sage' : 'bg-muted'
+          }`} />
+          <p className="text-muted text-sm">{statusText}</p>
         </div>
       </div>
     </div>

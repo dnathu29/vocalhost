@@ -75,6 +75,22 @@ const FALLBACK_WORKSHOPS: Workshop[] = [
   }
 ]
 
+function FillBar({ current, min, max }: { current: number; min: number; max: number }) {
+  const pct = Math.min(100, Math.round((current / (max || min)) * 100))
+  const color = current < min ? 'bg-ember' : current >= max ? 'bg-sage' : 'bg-clay'
+  return (
+    <div className="w-full h-1.5 bg-white/10 rounded-full overflow-hidden">
+      <div className={`h-full rounded-full transition-all duration-500 ${color}`} style={{ width: `${pct}%` }} />
+    </div>
+  )
+}
+
+function StatusDot({ status }: { status: string }) {
+  if (status === 'warning') return <span className="inline-block w-2 h-2 rounded-full bg-ember animate-pulse" />
+  if (status === 'full') return <span className="inline-block w-2 h-2 rounded-full bg-sage" />
+  return <span className="inline-block w-2 h-2 rounded-full bg-clay" />
+}
+
 export default function HostDashboard() {
   const [workshops, setWorkshops] = useState<Workshop[]>([])
   const [loading, setLoading] = useState(true)
@@ -87,6 +103,8 @@ export default function HostDashboard() {
   const [actionMessage, setActionMessage] = useState('')
   const [actionLog, setActionLog] = useState<any[]>([])
   const [showExecuteModal, setShowExecuteModal] = useState(false)
+  const [selectedSession, setSelectedSession] = useState<Session | null>(null)
+  const [showSessionModal, setShowSessionModal] = useState(false)
 
   useEffect(() => {
     fetchSessions()
@@ -98,8 +116,7 @@ export default function HostDashboard() {
       const res = await axios.get(`${API_BASE}/api/agent/actions`)
       setActionLog(res.data.items || [])
       setApiOnline(true)
-    } catch (error) {
-      console.warn('Could not fetch action log:', error)
+    } catch {
       setApiOnline(false)
     }
   }
@@ -109,11 +126,10 @@ export default function HostDashboard() {
       const res = await axios.get(`${API_BASE}/api/sessions`)
       setWorkshops(res.data)
       setApiOnline(true)
-      setLoading(false)
-    } catch (error) {
-      console.error('Error fetching sessions:', error)
+    } catch {
       setApiOnline(false)
       setWorkshops(FALLBACK_WORKSHOPS)
+    } finally {
       setLoading(false)
     }
   }
@@ -125,347 +141,367 @@ export default function HostDashboard() {
     try {
       const res = await axios.post(`${API_BASE}/api/run-agent`)
       setAgentPlan(res.data)
-      // Refresh session view to reflect any recent changes
       fetchSessions()
       setApiOnline(true)
       setApprovedMoves([])
       setCalledGuests([])
-    } catch (error) {
-      console.error('Error running agent:', error)
+    } catch {
       setApiOnline(false)
-      setAgentError('Backend offline. Showing last known sessions only.')
+      setAgentError('Backend offline. Showing last known sessions.')
     } finally {
       setAgentRunning(false)
     }
   }
 
-  const getStatusColor = (status: string) => {
-    switch (status) {
-      case 'warning':
-        return 'bg-red-100 text-red-800 border-red-300'
-      case 'full':
-        return 'bg-green-100 text-green-800 border-green-300'
-      default:
-        return 'bg-blue-100 text-blue-800 border-blue-300'
-    }
-  }
-
-  const getStatusBadge = (status: string) => {
-    switch (status) {
-      case 'warning':
-        return '⚠️ NEEDS BOOKING'
-      case 'full':
-        return '✅ FULL'
-      default:
-        return '📌 CONFIRMED'
-    }
-  }
-
   const handleApproveMove = (fromSessionId: string) => {
     const run = async () => {
-      const planItem = agentPlan?.consolidation_plan.find(
-        (item) => item.from_session_id === fromSessionId
-      )
-
+      const planItem = agentPlan?.consolidation_plan.find(i => i.from_session_id === fromSessionId)
       try {
         await axios.post(`${API_BASE}/api/agent/actions/approve`, {
           from_session_id: fromSessionId,
           to_session_id: planItem?.to_session_id || null,
         })
-
-        setApprovedMoves((prev) =>
-          prev.includes(fromSessionId)
-            ? prev.filter((id) => id !== fromSessionId)
-            : [...prev, fromSessionId]
-        )
-        setApiOnline(true)
-        setActionMessage(`Approval saved for session ${fromSessionId}.`)
+        setApprovedMoves(prev => prev.includes(fromSessionId) ? prev.filter(id => id !== fromSessionId) : [...prev, fromSessionId])
+        setActionMessage(`Move approved for session ${fromSessionId}.`)
         fetchActions()
-      } catch (error) {
-        console.error('Error saving approval:', error)
+      } catch {
         setApiOnline(false)
-        setActionMessage(`Backend offline. Approval for ${fromSessionId} kept locally.`)
-        setApprovedMoves((prev) =>
-          prev.includes(fromSessionId)
-            ? prev.filter((id) => id !== fromSessionId)
-            : [...prev, fromSessionId]
-        )
+        setApprovedMoves(prev => prev.includes(fromSessionId) ? prev.filter(id => id !== fromSessionId) : [...prev, fromSessionId])
       }
     }
-
     run()
   }
 
   const handleCallGuest = (bookingId: string, guestName: string) => {
     const run = async () => {
       try {
-        await axios.post(`${API_BASE}/api/agent/actions/call`, {
-          booking_id: bookingId,
-          guest_name: guestName,
-        })
-
-        if (!calledGuests.includes(bookingId)) {
-          setCalledGuests((prev) => [...prev, bookingId])
-        }
-        setApiOnline(true)
+        await axios.post(`${API_BASE}/api/agent/actions/call`, { booking_id: bookingId, guest_name: guestName })
+        if (!calledGuests.includes(bookingId)) setCalledGuests(prev => [...prev, bookingId])
         setActionMessage(`Call logged for ${guestName}.`)
         fetchActions()
-      } catch (error) {
-        console.error('Error logging call:', error)
-        setApiOnline(false)
-        if (!calledGuests.includes(bookingId)) {
-          setCalledGuests((prev) => [...prev, bookingId])
-        }
-        setActionMessage(`Backend offline. Call for ${guestName} kept locally.`)
+      } catch {
+        if (!calledGuests.includes(bookingId)) setCalledGuests(prev => [...prev, bookingId])
       }
     }
-
     run()
   }
 
-  const handleExecuteApprovedMoves = async () => {
+  const handleExecuteApprovedMoves = () => {
     if (!agentPlan || approvedMoves.length === 0) return
     setShowExecuteModal(true)
   }
 
   const executeApprovedMovesConfirmed = async () => {
     setShowExecuteModal(false)
-    setActionMessage('')
     try {
       for (const fromSessionId of approvedMoves) {
-        const planItem = agentPlan.consolidation_plan.find((p) => p.from_session_id === fromSessionId)
-        if (!planItem || !planItem.to_session_id) continue
-
+        const planItem = agentPlan!.consolidation_plan.find(p => p.from_session_id === fromSessionId)
+        if (!planItem?.to_session_id) continue
         await axios.post(`${API_BASE}/api/agent/actions/execute`, {
           from_session_id: planItem.from_session_id,
           to_session_id: planItem.to_session_id,
         })
       }
-
-      // Refresh UI state
       await fetchSessions()
       await fetchActions()
-      setActionMessage('Executed approved moves and refreshed sessions.')
+      setActionMessage('Moves executed successfully.')
       setApprovedMoves([])
-    } catch (error) {
-      console.error('Error executing moves:', error)
-      setApiOnline(false)
-      setActionMessage('Failed to execute moves. See console for details.')
+    } catch {
+      setActionMessage('Failed to execute moves.')
     }
   }
-
-  const executeCancel = () => setShowExecuteModal(false)
 
   const handleUndo = async () => {
     try {
       const res = await axios.post(`${API_BASE}/api/agent/actions/undo`)
-      if (res.data.status === 'success') {
-        setActionMessage('Undo applied: ' + (res.data.restored || res.data.undone || ''))
-      } else {
-        setActionMessage('Nothing to undo.')
-      }
+      setActionMessage(res.data.status === 'success' ? 'Last action undone.' : 'Nothing to undo.')
       await fetchSessions()
       await fetchActions()
-    } catch (error) {
-      console.error('Undo failed:', error)
-      setActionMessage('Undo failed. See console for details.')
+    } catch {
+      setActionMessage('Undo failed.')
     }
   }
 
-  const [selectedSession, setSelectedSession] = useState<Session | null>(null)
-  const [showSessionModal, setShowSessionModal] = useState(false)
-
-  const openSessionModal = (s: Session) => {
-    setSelectedSession(s)
-    setShowSessionModal(true)
-  }
+  const openSessionModal = (s: Session) => { setSelectedSession(s); setShowSessionModal(true) }
   const closeSessionModal = () => { setSelectedSession(null); setShowSessionModal(false) }
 
+  const totalSessions = workshops.reduce((a, w) => a + w.sessions.length, 0)
+  const warningSessions = workshops.reduce((a, w) => a + w.sessions.filter(s => s.status === 'warning').length, 0)
+  const fullSessions = workshops.reduce((a, w) => a + w.sessions.filter(s => s.status === 'full').length, 0)
+
   if (loading) {
-    return <div className="text-center text-2xl">Loading sessions...</div>
+    return (
+      <div className="flex items-center justify-center h-64">
+        <div className="flex gap-1">
+          {[0,1,2].map(i => (
+            <div key={i} className="w-2 h-2 rounded-full bg-clay animate-bounce" style={{ animationDelay: `${i * 0.15}s` }} />
+          ))}
+        </div>
+      </div>
+    )
   }
 
   return (
     <div className="space-y-8">
-      {/* Header */}
-      <div className="bg-white rounded-lg shadow-lg p-6">
-        <h2 className="text-3xl font-bold mb-2">Workshop Sessions</h2>
-        <p className="text-gray-600">Monitor bookings and run AI agent to optimize sessions</p>
-        <div className={`mt-4 inline-flex items-center rounded-full px-3 py-1 text-sm font-semibold ${
-          apiOnline ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'
-        }`}>
-          {apiOnline ? 'API: Connected' : 'API: Offline (fallback mode)'}
+
+      {/* Page header */}
+      <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-4">
+        <div>
+          <p className="text-muted text-sm uppercase tracking-widest mb-1">Dashboard</p>
+          <h1 className="font-display text-4xl text-parchment">Workshop Sessions</h1>
+        </div>
+        <div className="flex items-center gap-2">
+          <span className={`inline-flex items-center gap-1.5 text-xs px-3 py-1 rounded-full border ${
+            apiOnline ? 'border-sage/40 text-sage bg-sage/10' : 'border-ember/40 text-ember bg-ember/10'
+          }`}>
+            <span className={`w-1.5 h-1.5 rounded-full ${apiOnline ? 'bg-sage' : 'bg-ember'}`} />
+            {apiOnline ? 'Live' : 'Offline'}
+          </span>
         </div>
       </div>
 
-      {/* Run Agent Button */}
-      <div className="bg-white rounded-lg shadow-lg p-6">
-        <button
-          onClick={handleRunAgent}
-          disabled={agentRunning}
-          className={`px-6 py-3 rounded-lg font-bold text-white text-lg transition ${
-            agentRunning
-              ? 'bg-gray-400 cursor-not-allowed'
-              : 'bg-primary hover:bg-indigo-700'
-          }`}
-        >
-          {agentRunning ? '⏳ Running Agent...' : '🤖 Run AI Agent'}
-        </button>
-        {agentError && <p className="mt-3 text-sm text-amber-700">{agentError}</p>}
-        {actionMessage && <p className="mt-3 text-sm text-emerald-700">{actionMessage}</p>}
+      {/* Stats row */}
+      <div className="grid grid-cols-3 gap-4">
+        {[
+          { label: 'Total Sessions', value: totalSessions, color: 'text-parchment' },
+          { label: 'Need Attention', value: warningSessions, color: 'text-ember' },
+          { label: 'Fully Booked', value: fullSessions, color: 'text-sage' },
+        ].map(s => (
+          <div key={s.label} className="bg-surface border border-white/8 rounded-2xl p-5">
+            <p className="text-muted text-xs uppercase tracking-wider mb-2">{s.label}</p>
+            <p className={`font-display text-4xl ${s.color}`}>{s.value}</p>
+          </div>
+        ))}
       </div>
 
-      {/* Agent Plan Display */}
-      {agentPlan && (
-        <div className="bg-gradient-to-r from-white to-slate-50 rounded-lg shadow-md p-6 border-l-4 border-primary">
-          <h3 className="text-2xl font-bold mb-4">Agent Plan</h3>
-          <p className="text-gray-700 mb-4">{agentPlan.message || 'Planning complete.'}</p>
+      {/* Run Agent */}
+      <div className="bg-surface border border-white/8 rounded-2xl p-6 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+        <div>
+          <h2 className="font-display text-xl text-parchment mb-1">AI Consolidation Agent</h2>
+          <p className="text-muted text-sm">Detects underbooked sessions and recommends rescheduling.</p>
+          {agentError && <p className="text-ember text-sm mt-2">{agentError}</p>}
+          {actionMessage && <p className="text-sage text-sm mt-2">{actionMessage}</p>}
+        </div>
+        <div className="flex gap-3 shrink-0">
           {approvedMoves.length > 0 && (
-            <div className="mb-4">
-              <button
-                onClick={handleExecuteApprovedMoves}
-                className="px-4 py-2 bg-emerald-600 text-white rounded font-bold hover:bg-emerald-500"
-              >
-                Execute Approved Moves
-              </button>
-            </div>
+            <button onClick={handleExecuteApprovedMoves} className="px-5 py-2.5 bg-sage text-ink rounded-xl text-sm font-semibold hover:bg-sage/80 transition">
+              Execute ({approvedMoves.length})
+            </button>
           )}
+          <button
+            onClick={handleRunAgent}
+            disabled={agentRunning}
+            className={`px-6 py-2.5 rounded-xl text-sm font-semibold transition flex items-center gap-2 ${
+              agentRunning ? 'bg-white/10 text-muted cursor-not-allowed' : 'bg-clay text-ink hover:bg-clay/80'
+            }`}
+          >
+            {agentRunning ? (
+              <>
+                <span className="w-3 h-3 border-2 border-muted border-t-transparent rounded-full animate-spin" />
+                Analyzing...
+              </>
+            ) : 'Run Agent'}
+          </button>
+        </div>
+      </div>
 
-          {!!agentPlan.underbooked_sessions?.length && (
-            <div className="mb-4">
-              <h4 className="font-bold mb-2">Underbooked Sessions</h4>
-              <div className="grid gap-2">
-                {agentPlan.underbooked_sessions.map((item) => (
-                  <div key={item.session_id} className="bg-red-50 border border-red-200 rounded p-3 text-sm">
-                    <span className="font-semibold">{item.workshop_name}</span> - {item.time} ({item.current_pax}/{item.min_pax})
-                  </div>
-                ))}
+      {/* Agent plan */}
+      {agentPlan && (
+        <div className="bg-surface border border-clay/20 rounded-2xl overflow-hidden">
+          <div className="px-6 py-4 border-b border-white/8 flex items-center justify-between">
+            <h3 className="font-display text-lg text-parchment">Agent Recommendations</h3>
+            <span className="text-xs text-muted">{agentPlan.message}</span>
+          </div>
+
+          <div className="p-6 grid sm:grid-cols-2 gap-6">
+            {/* Underbooked */}
+            {agentPlan.underbooked_sessions?.length > 0 && (
+              <div>
+                <p className="text-xs text-muted uppercase tracking-wider mb-3">Underbooked</p>
+                <div className="space-y-2">
+                  {agentPlan.underbooked_sessions.map(item => (
+                    <div key={item.session_id} className="bg-ember/10 border border-ember/20 rounded-xl p-3">
+                      <p className="text-parchment text-sm font-medium">{item.workshop_name}</p>
+                      <p className="text-ember text-xs mt-0.5">{item.time} · {item.current_pax}/{item.min_pax} pax · {item.pax_gap} short</p>
+                    </div>
+                  ))}
+                </div>
               </div>
-            </div>
-          )}
+            )}
 
-          {!!agentPlan.consolidation_plan?.length && (
-            <div className="mb-4">
-              <h4 className="font-bold mb-2">Consolidation Recommendations</h4>
-              <div className="grid gap-2">
-                {agentPlan.consolidation_plan.map((item, index) => (
-                  <div key={`${item.from_session_id}-${index}`} className="bg-blue-50 border border-blue-200 rounded p-3 text-sm">
-                    <p className="mb-2">
-                      Move {item.from_time} ({item.from_session_id}) to {item.to_time || 'N/A'} ({item.to_session_id || 'manual review'})
-                    </p>
-                    <button
-                      onClick={() => handleApproveMove(item.from_session_id)}
-                      className={`rounded px-3 py-1 text-xs font-bold transition ${
-                        approvedMoves.includes(item.from_session_id)
-                          ? 'bg-emerald-600 text-white'
-                          : 'bg-slate-800 text-white hover:bg-slate-700'
-                      }`}
-                    >
-                      {approvedMoves.includes(item.from_session_id)
-                        ? 'Approved'
-                        : 'Approve Reschedule'}
-                    </button>
-                  </div>
-                ))}
+            {/* Consolidation */}
+            {agentPlan.consolidation_plan?.length > 0 && (
+              <div>
+                <p className="text-xs text-muted uppercase tracking-wider mb-3">Proposed Moves</p>
+                <div className="space-y-2">
+                  {agentPlan.consolidation_plan.map((item, i) => (
+                    <div key={`${item.from_session_id}-${i}`} className="bg-clay/10 border border-clay/20 rounded-xl p-3">
+                      <p className="text-parchment text-sm font-medium">{item.workshop_name}</p>
+                      <p className="text-clay text-xs mt-0.5">{item.from_time} → {item.to_time || '?'}</p>
+                      <button
+                        onClick={() => handleApproveMove(item.from_session_id)}
+                        className={`mt-2 text-xs px-3 py-1 rounded-lg font-medium transition ${
+                          approvedMoves.includes(item.from_session_id)
+                            ? 'bg-sage text-ink'
+                            : 'bg-white/10 text-parchment hover:bg-white/15'
+                        }`}
+                      >
+                        {approvedMoves.includes(item.from_session_id) ? '✓ Approved' : 'Approve'}
+                      </button>
+                    </div>
+                  ))}
+                </div>
               </div>
-            </div>
-          )}
+            )}
 
-          {!!agentPlan.customers_to_contact?.length && (
-            <div className="mb-4">
-              <h4 className="font-bold mb-2">Customers To Contact</h4>
-              <div className="grid gap-2">
-                {agentPlan.customers_to_contact.map((guest) => (
-                  <div key={guest.booking_id} className="bg-amber-50 border border-amber-200 rounded p-3 text-sm">
-                    <p className="font-semibold">{guest.guest_name}</p>
-                    <p className="text-gray-700 mb-2">{guest.phone} • Booking {guest.booking_id}</p>
-                    <button
-                      onClick={() => handleCallGuest(guest.booking_id, guest.guest_name)}
-                      className={`rounded px-3 py-1 text-xs font-bold transition ${
-                        calledGuests.includes(guest.booking_id)
-                          ? 'bg-blue-600 text-white'
-                          : 'bg-amber-600 text-white hover:bg-amber-500'
-                      }`}
-                    >
-                      {calledGuests.includes(guest.booking_id)
-                        ? 'Call Logged'
-                        : 'Call Guest'}
-                    </button>
-                  </div>
-                ))}
+            {/* Guests to contact */}
+            {agentPlan.customers_to_contact?.length > 0 && (
+              <div className="sm:col-span-2">
+                <p className="text-xs text-muted uppercase tracking-wider mb-3">Guests to Contact</p>
+                <div className="grid sm:grid-cols-2 gap-2">
+                  {agentPlan.customers_to_contact.map(guest => (
+                    <div key={guest.booking_id} className="bg-white/5 border border-white/10 rounded-xl p-3 flex items-center justify-between">
+                      <div>
+                        <p className="text-parchment text-sm font-medium">{guest.guest_name}</p>
+                        <p className="text-muted text-xs">{guest.phone}</p>
+                      </div>
+                      <button
+                        onClick={() => handleCallGuest(guest.booking_id, guest.guest_name)}
+                        className={`text-xs px-3 py-1.5 rounded-lg font-medium transition ${
+                          calledGuests.includes(guest.booking_id)
+                            ? 'bg-sage/20 text-sage'
+                            : 'bg-clay/20 text-clay hover:bg-clay/30'
+                        }`}
+                      >
+                        {calledGuests.includes(guest.booking_id) ? 'Called' : 'Call'}
+                      </button>
+                    </div>
+                  ))}
+                </div>
               </div>
-            </div>
-          )}
-
-          <div className="text-sm text-gray-700 grid grid-cols-2 gap-4">
-            <p>
-              Customers to contact: <span className="font-bold">{agentPlan.customers_to_contact?.length || 0}</span>
-            </p>
-            <p>
-              Approved moves: <span className="font-bold">{approvedMoves.length}</span>
-            </p>
+            )}
           </div>
         </div>
       )}
 
-      {/* Action Log Panel */}
-      <div className="bg-white rounded-lg shadow-lg p-6">
-        <div className="flex items-center justify-between">
-          <h3 className="text-2xl font-bold mb-2">Action Log</h3>
-          <div className="flex gap-2">
-            <button
-              onClick={fetchActions}
-              className="px-3 py-1 bg-slate-800 text-white rounded text-sm"
-            >
-              Refresh
-            </button>
-            <button
-              onClick={handleUndo}
-              className="px-3 py-1 bg-rose-600 text-white rounded text-sm"
-            >
-              Undo Last
-            </button>
-          </div>
+      {/* Schedule grid */}
+      <div className="bg-surface border border-white/8 rounded-2xl overflow-hidden">
+        <div className="px-6 py-4 border-b border-white/8 flex items-center justify-between">
+          <h3 className="font-display text-lg text-parchment">Schedule</h3>
+          <button onClick={fetchSessions} className="text-xs text-muted hover:text-parchment transition px-3 py-1 rounded-lg border border-white/10 hover:border-white/20">
+            Refresh
+          </button>
         </div>
 
-        {actionLog.length === 0 ? (
-          <p className="text-sm text-gray-600 mt-3">No saved actions yet.</p>
-        ) : (
-          <div className="mt-3 grid gap-2">
-            {actionLog.map((act, idx) => (
-              <div key={idx} className="p-3 border rounded bg-white shadow-sm text-sm flex justify-between items-start">
-                <div>
-                  <div className="font-semibold mb-1">{act.type === 'approve_reschedule' ? 'Approve: Reschedule' : act.type === 'call_guest' ? 'Call: Guest' : act.type}</div>
-                  <div className="text-xs text-gray-600">
-                    {act.type === 'approve_reschedule' && (
-                      <>
-                        From <span className="font-medium">{act.from_session_id}</span> → To <span className="font-medium">{act.to_session_id || 'N/A'}</span>
-                      </>
-                    )}
-                    {act.type === 'call_guest' && (
-                      <>
-                        Booking <span className="font-medium">{act.booking_id}</span> — <span className="font-medium">{act.guest_name}</span>
-                      </>
-                    )}
+        <div className="p-6 overflow-x-auto">
+          {(() => {
+            const startHour = 8
+            const endHour = 20
+            const hours: string[] = []
+            for (let h = startHour; h <= endHour; h++) hours.push((h < 10 ? '0' + h : '' + h) + ':00')
+
+            return (
+              <div className="min-w-[640px]">
+                <div className="flex mb-2">
+                  <div className="w-16" />
+                  <div className="flex-1 grid" style={{ gridTemplateColumns: `repeat(${workshops.length}, minmax(0,1fr))` }}>
+                    {workshops.map(w => (
+                      <div key={w.workshop_id} className="text-center text-xs text-muted font-medium uppercase tracking-wider pb-3 border-b border-white/8 px-2">
+                        {w.workshop_name}
+                      </div>
+                    ))}
                   </div>
                 </div>
-                <div className="text-xs text-gray-400">#{idx + 1}</div>
+
+                <div className="flex">
+                  <div className="w-16 shrink-0">
+                    {hours.map(t => (
+                      <div key={t} className="h-14 flex items-center justify-end pr-3">
+                        <span className="text-xs text-muted/60">{t}</span>
+                      </div>
+                    ))}
+                  </div>
+
+                  <div className="flex-1 relative">
+                    <div className="grid" style={{ gridTemplateColumns: `repeat(${workshops.length}, minmax(0,1fr))`, gridTemplateRows: `repeat(${hours.length}, 3.5rem)` }}>
+                      {Array.from({ length: workshops.length * hours.length }).map((_, idx) => (
+                        <div key={idx} className="border-b border-r border-white/5" />
+                      ))}
+                      {workshops.map((w, colIdx) =>
+                        w.sessions.map(s => {
+                          const hour = parseInt(s.time.split(':')[0] || '0', 10)
+                          const row = Math.max(0, Math.min(hours.length - 1, hour - startHour))
+                          const statusStyle = s.status === 'warning'
+                            ? 'border-ember/40 bg-ember/10 hover:bg-ember/20'
+                            : s.status === 'full'
+                            ? 'border-sage/40 bg-sage/10 hover:bg-sage/20'
+                            : 'border-clay/40 bg-clay/10 hover:bg-clay/20'
+                          return (
+                            <div
+                              key={s.session_id}
+                              onClick={() => openSessionModal(s)}
+                              role="button"
+                              className={`cursor-pointer m-1 rounded-xl border p-2 transition-all duration-150 ${statusStyle}`}
+                              style={{ gridColumn: colIdx + 1, gridRow: row + 1 }}
+                            >
+                              <div className="flex items-center gap-1.5">
+                                <StatusDot status={s.status} />
+                                <span className="text-parchment text-xs font-semibold">{s.time}</span>
+                              </div>
+                              <FillBar current={s.current_pax} min={s.min_pax} max={s.min_pax + 2} />
+                              <p className="text-muted text-xs mt-1">{s.current_pax}/{s.min_pax}</p>
+                            </div>
+                          )
+                        })
+                      )}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )
+          })()}
+        </div>
+      </div>
+
+      {/* Action log */}
+      {actionLog.length > 0 && (
+        <div className="bg-surface border border-white/8 rounded-2xl overflow-hidden">
+          <div className="px-6 py-4 border-b border-white/8 flex items-center justify-between">
+            <h3 className="font-display text-lg text-parchment">Action Log</h3>
+            <div className="flex gap-2">
+              <button onClick={fetchActions} className="text-xs text-muted hover:text-parchment px-3 py-1 rounded-lg border border-white/10 hover:border-white/20 transition">Refresh</button>
+              <button onClick={handleUndo} className="text-xs text-ember hover:text-ember/70 px-3 py-1 rounded-lg border border-ember/20 hover:border-ember/40 transition">Undo Last</button>
+            </div>
+          </div>
+          <div className="divide-y divide-white/5">
+            {actionLog.map((act, idx) => (
+              <div key={idx} className="px-6 py-3 flex items-center justify-between">
+                <div>
+                  <p className="text-parchment text-sm">
+                    {act.type === 'approve_reschedule' ? 'Reschedule approved' : act.type === 'call_guest' ? `Called ${act.guest_name}` : act.type}
+                  </p>
+                  <p className="text-muted text-xs">
+                    {act.type === 'approve_reschedule' && `${act.from_session_id} → ${act.to_session_id || '?'}`}
+                    {act.type === 'call_guest' && `Booking ${act.booking_id}`}
+                  </p>
+                </div>
+                <span className="text-muted/40 text-xs">#{idx + 1}</span>
               </div>
             ))}
           </div>
-        )}
-      </div>
+        </div>
+      )}
 
       {/* Execute confirmation modal */}
       {showExecuteModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center">
-          <div className="absolute inset-0 bg-black opacity-40" onClick={executeCancel}></div>
-          <div className="bg-white rounded-lg shadow-xl p-6 z-10 w-11/12 max-w-md">
-            <h4 className="text-lg font-bold mb-2">Confirm Execute</h4>
-            <p className="text-sm text-gray-700 mb-4">This will apply all approved moves and create a timestamped applied snapshot. This is non-destructive but can be undone.</p>
-            <div className="flex justify-end gap-3">
-              <button onClick={executeCancel} className="px-4 py-2 rounded border">Cancel</button>
-              <button onClick={executeApprovedMovesConfirmed} className="px-4 py-2 bg-emerald-600 text-white rounded">Execute</button>
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+          <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={() => setShowExecuteModal(false)} />
+          <div className="bg-canvas border border-white/10 rounded-2xl p-6 z-10 w-full max-w-md shadow-2xl">
+            <h4 className="font-display text-xl text-parchment mb-2">Confirm Execution</h4>
+            <p className="text-muted text-sm mb-6">This will apply {approvedMoves.length} approved move(s) and update the booking database.</p>
+            <div className="flex gap-3 justify-end">
+              <button onClick={() => setShowExecuteModal(false)} className="px-4 py-2 rounded-xl border border-white/10 text-muted hover:text-parchment text-sm transition">Cancel</button>
+              <button onClick={executeApprovedMovesConfirmed} className="px-5 py-2 bg-sage text-ink rounded-xl text-sm font-semibold hover:bg-sage/80 transition">Execute</button>
             </div>
           </div>
         </div>
@@ -473,112 +509,32 @@ export default function HostDashboard() {
 
       {/* Session detail modal */}
       {showSessionModal && selectedSession && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center">
-          <div className="absolute inset-0 bg-black/40 backdrop-blur-sm" onClick={closeSessionModal}></div>
-          <div className="bg-white rounded-xl shadow-2xl p-6 z-10 w-11/12 max-w-lg">
-            <div className="flex items-start justify-between">
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+          <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={closeSessionModal} />
+          <div className="bg-canvas border border-white/10 rounded-2xl p-6 z-10 w-full max-w-md shadow-2xl">
+            <div className="flex items-start justify-between mb-4">
               <div>
-                <h4 className="text-xl font-bold">Session {selectedSession.session_id} • {selectedSession.time}</h4>
-                <p className="text-sm text-gray-600">Attendees: <span className="font-semibold">{selectedSession.current_pax}</span> / {selectedSession.min_pax}</p>
+                <h4 className="font-display text-xl text-parchment">{selectedSession.time} Session</h4>
+                <p className="text-muted text-sm">{selectedSession.session_id}</p>
               </div>
-              <button onClick={closeSessionModal} className="text-gray-500 hover:text-gray-700">✕</button>
+              <button onClick={closeSessionModal} className="text-muted hover:text-parchment transition text-lg">✕</button>
             </div>
-
-            <div className="mt-4 grid gap-3">
-              <div className="flex gap-2">
-                <button onClick={() => { handleApproveMove(selectedSession.session_id); closeSessionModal() }} className="flex-1 px-4 py-2 bg-emerald-600 text-white rounded">Approve Reschedule</button>
-                <button onClick={() => { handleUndo(); closeSessionModal() }} className="px-4 py-2 bg-rose-500 text-white rounded">Undo</button>
+            <div className="mb-4">
+              <div className="flex justify-between text-sm mb-1">
+                <span className="text-muted">Capacity</span>
+                <span className="text-parchment">{selectedSession.current_pax} / {selectedSession.min_pax}</span>
               </div>
-              <div className="text-sm text-gray-600">Actions are audited. Use <span className="font-semibold">Execute</span> to apply approved moves.</div>
+              <FillBar current={selectedSession.current_pax} min={selectedSession.min_pax} max={selectedSession.min_pax + 2} />
+            </div>
+            <div className="flex gap-3">
+              <button onClick={() => { handleApproveMove(selectedSession.session_id); closeSessionModal() }} className="flex-1 px-4 py-2 bg-clay text-ink rounded-xl text-sm font-semibold hover:bg-clay/80 transition">
+                Approve Reschedule
+              </button>
+              <button onClick={() => { handleUndo(); closeSessionModal() }} className="px-4 py-2 border border-ember/30 text-ember rounded-xl text-sm hover:bg-ember/10 transition">Undo</button>
             </div>
           </div>
         </div>
       )}
-
-      {/* Calendar-style Schedule */}
-      <div className="bg-gradient-to-r from-sky-50 to-white rounded-lg shadow-2xl p-6">
-        <div className="flex items-center justify-between mb-4">
-          <div>
-            <h3 className="text-2xl font-bold">Schedule</h3>
-            <p className="text-sm text-gray-500">Workshops as columns • Times as rows (08:00–20:00)</p>
-          </div>
-          <div className="flex gap-3">
-            <button onClick={handleRunAgent} className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-md shadow">🤖 Run Agent</button>
-            <button onClick={() => fetchSessions()} className="px-4 py-2 bg-white border rounded-md shadow-sm">Refresh</button>
-          </div>
-        </div>
-
-        {/* build time slots */}
-        {(() => {
-          const startHour = 8
-          const endHour = 20
-          const hours: string[] = []
-          for (let h = startHour; h <= endHour; h++) {
-            hours.push((h < 10 ? '0' + h : '' + h) + ':00')
-          }
-
-          return (
-            <div className="overflow-x-auto">
-              <div className="min-w-[760px]">
-                {/* header row */}
-                <div className="flex items-end mb-2">
-                  <div className="w-28" />
-                  <div className="flex-1 grid" style={{ gridTemplateColumns: `repeat(${workshops.length}, minmax(0,1fr))` }}>
-                    {workshops.map((w) => (
-                      <div key={w.workshop_id} className="text-center font-semibold text-sm p-2 border-b">{w.workshop_name}</div>
-                    ))}
-                  </div>
-                </div>
-
-                <div className="flex">
-                  {/* time column */}
-                  <div className="w-28">
-                    {hours.map((t) => (
-                      <div key={t} className="h-12 text-xs text-gray-500 border-b flex items-center justify-end pr-2">{t}</div>
-                    ))}
-                  </div>
-
-                  {/* schedule grid */}
-                  <div className="flex-1">
-                    <div className="relative">
-                      <div className="grid" style={{ gridTemplateColumns: `repeat(${workshops.length}, minmax(0,1fr))`, gridTemplateRows: `repeat(${hours.length}, 3rem)` }}>
-                        {/* background cells */}
-                        {Array.from({ length: workshops.length * hours.length }).map((_, idx) => (
-                          <div key={idx} className="border-b border-r bg-white" />
-                        ))}
-
-                        {/* session blocks placed by grid row/column */}
-                        {workshops.map((w, colIdx) => (
-                          w.sessions.map((s) => {
-                            const parts = s.time.split(':')
-                            const hour = parseInt(parts[0] || '0', 10)
-                            const rowIndex = Math.max(0, Math.min(hours.length - 1, hour - startHour))
-                            return (
-                              <div
-                                key={s.session_id}
-                                onClick={() => openSessionModal(s)}
-                                role="button"
-                                className={`cursor-pointer p-2 m-1 rounded-xl shadow-lg border transform hover:-translate-y-0.5 transition ${getStatusColor(s.status)}`} 
-                                style={{ gridColumn: colIdx + 1, gridRow: rowIndex + 1 }}
-                              >
-                                <div className="flex items-center justify-between">
-                                  <div className="text-sm font-semibold">{s.time} • {s.session_id}</div>
-                                  <div className="text-xs text-gray-700">👥 {s.current_pax}/{s.min_pax}</div>
-                                </div>
-                                <div className="text-xs text-gray-600 mt-1">Click for details</div>
-                              </div>
-                            )
-                          })
-                        ))}
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            </div>
-          )
-        })()}
-      </div>
     </div>
   )
 }

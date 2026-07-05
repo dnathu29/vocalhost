@@ -8,28 +8,32 @@ export default function Home() {
   const [view, setView] = useState<'host' | 'guest'>('host')
 
   return (
-    <main className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100">
-      {/* Navigation */}
-      <nav className="bg-white shadow-md p-4">
-        <div className="max-w-7xl mx-auto flex justify-between items-center">
-          <h1 className="text-2xl font-bold text-primary">🎤 VocalHost</h1>
-          <div className="flex gap-4">
+    <main className="min-h-screen bg-ink">
+      <nav className="border-b border-white/10 bg-canvas/80 backdrop-blur-md sticky top-0 z-50">
+        <div className="max-w-7xl mx-auto px-6 py-4 flex justify-between items-center">
+          <div className="flex items-center gap-3">
+            <div className="w-8 h-8 rounded-full bg-gradient-to-br from-clay to-ember flex items-center justify-center text-ink text-sm font-bold">V</div>
+            <span className="font-display text-xl text-parchment tracking-wide">VocalHost</span>
+            <span className="text-muted text-xs ml-1 hidden sm:block">/ workshop intelligence</span>
+          </div>
+
+          <div className="flex items-center gap-1 bg-surface rounded-full p-1">
             <button
               onClick={() => setView('host')}
-              className={`px-4 py-2 rounded-lg font-semibold transition ${
+              className={`px-5 py-1.5 rounded-full text-sm font-medium transition-all duration-200 ${
                 view === 'host'
-                  ? 'bg-primary text-white'
-                  : 'bg-gray-200 text-gray-800 hover:bg-gray-300'
+                  ? 'bg-clay text-ink shadow-sm'
+                  : 'text-muted hover:text-parchment'
               }`}
             >
-              Host Dashboard
+              Host
             </button>
             <button
               onClick={() => setView('guest')}
-              className={`px-4 py-2 rounded-lg font-semibold transition ${
+              className={`px-5 py-1.5 rounded-full text-sm font-medium transition-all duration-200 ${
                 view === 'guest'
-                  ? 'bg-primary text-white'
-                  : 'bg-gray-200 text-gray-800 hover:bg-gray-300'
+                  ? 'bg-clay text-ink shadow-sm'
+                  : 'text-muted hover:text-parchment'
               }`}
             >
               Guest Call
@@ -38,8 +42,7 @@ export default function Home() {
         </div>
       </nav>
 
-      {/* Main Content */}
-      <div className="max-w-7xl mx-auto p-8">
+      <div className="max-w-7xl mx-auto px-6 py-10">
         {view === 'host' ? <HostDashboard /> : <GuestPhoneCall />}
       </div>
     </main>
