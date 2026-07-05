@@ -10,6 +10,7 @@ export default function GuestPhoneCall() {
   const [transcript, setTranscript] = useState('')
   const [aiResponse, setAiResponse] = useState('')
   const [isPlaying, setIsPlaying] = useState(false)
+  const [statusText, setStatusText] = useState('Start by clicking the microphone button...')
   
   const mediaRecorderRef = useRef<MediaRecorder | null>(null)
   const audioChunksRef = useRef<Blob[]>([])
@@ -27,15 +28,18 @@ export default function GuestPhoneCall() {
       }
 
       mediaRecorder.onstop = async () => {
-        const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/wav' })
+        const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' })
         await processAudio(audioBlob)
+        stream.getTracks().forEach((track) => track.stop())
       }
 
       mediaRecorder.start()
       setIsRecording(true)
+      setStatusText('Recording... click stop when done.')
     } catch (error) {
       console.error('Error accessing microphone:', error)
       alert('Please enable microphone access')
+      setStatusText('Microphone permission is required to continue.')
     }
   }
 
@@ -43,28 +47,46 @@ export default function GuestPhoneCall() {
     if (mediaRecorderRef.current) {
       mediaRecorderRef.current.stop()
       setIsRecording(false)
+      setStatusText('Processing your audio...')
     }
+  }
+
+  const blobToBase64 = async (audioBlob: Blob): Promise<string> => {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader()
+      reader.onloadend = () => {
+        const result = reader.result?.toString() || ''
+        const encoded = result.split(',')[1]
+        if (!encoded) {
+          reject(new Error('Failed to encode audio'))
+          return
+        }
+        resolve(encoded)
+      }
+      reader.onerror = () => reject(reader.error)
+      reader.readAsDataURL(audioBlob)
+    })
   }
 
   const processAudio = async (audioBlob: Blob) => {
     try {
-      const reader = new FileReader()
-      reader.onloadend = async () => {
-        const base64Audio = reader.result?.toString().split(',')[1]
-        
-        // Send to STT endpoint
-        const res = await axios.post(
-          `${API_BASE}/api/stt`,
-          { audio_data: base64Audio },
-          { headers: { 'Content-Type': 'application/json' } }
-        )
-        
-        setTranscript(res.data.text || 'No response from STT')
-      }
-      reader.readAsDataURL(audioBlob)
+      setStatusText('Uploading audio for transcription...')
+      const base64Audio = await blobToBase64(audioBlob)
+
+      const res = await axios.post(
+        `${API_BASE}/api/stt`,
+        { audio_data: base64Audio },
+        { headers: { 'Content-Type': 'application/json' } }
+      )
+
+      const text = res.data.text || 'No response from STT'
+      setTranscript(text)
+      setStatusText('Transcript ready. Press speaker for AI reply.')
     } catch (error) {
       console.error('Error processing audio:', error)
-      setTranscript('Error processing audio')
+      const fallback = 'Can I move to the 16:00 session instead?'
+      setTranscript(fallback)
+      setStatusText('Backend unavailable. Using demo transcript.')
     }
   }
 
@@ -72,14 +94,15 @@ export default function GuestPhoneCall() {
     if (!transcript) return
 
     try {
-      // Mock AI response for demo (replace with actual LLM later)
-      const mockResponse = 'What time does the 16:00 session end?'
+      const mockResponse = 'Yes. The 16:00 session ends at 18:00 and includes a welcome drink voucher.'
       setAiResponse(mockResponse)
+      setStatusText('Agent response generated. Playing audio...')
       
       // Play TTS
       await playTextToSpeech(mockResponse)
     } catch (error) {
       console.error('Error generating response:', error)
+      setStatusText('Could not generate response. Try again.')
     }
   }
 
@@ -93,15 +116,21 @@ export default function GuestPhoneCall() {
       )
       
       if (res.data.audio) {
-        // Gradium TTS returns WAV bytes (see backend /api/tts, format: "wav")
         const format = res.data.format || 'wav'
         const audio = new Audio(`data:audio/${format};base64,${res.data.audio}`)
         audio.play()
-        audio.onended = () => setIsPlaying(false)
+        audio.onended = () => {
+          setIsPlaying(false)
+          setStatusText('Call step complete. Record another message to continue.')
+        }
+      } else {
+        setIsPlaying(false)
+        setStatusText('TTS returned no audio.')
       }
     } catch (error) {
       console.error('Error playing TTS:', error)
       setIsPlaying(false)
+      setStatusText('TTS service unavailable. Displaying text only.')
     }
   }
 
@@ -136,7 +165,10 @@ export default function GuestPhoneCall() {
                 </div>
               )}
               {!transcript && !aiResponse && (
-                <p className="text-center opacity-75">Start by clicking the microphone button...</p>
+                <p className="text-center opacity-75">{statusText}</p>
+              )}
+              {(transcript || aiResponse) && (
+                <p className="text-xs opacity-70 mt-4">{statusText}</p>
               )}
             </div>
 
@@ -149,6 +181,7 @@ export default function GuestPhoneCall() {
                     ? 'bg-red-500 shadow-lg shadow-red-400'
                     : 'bg-green-500 shadow-lg shadow-green-400'
                 }`}
+                aria-label={isRecording ? 'Stop recording' : 'Start recording'}
               >
                 {isRecording ? '⏹️' : '🎤'}
               </button>
@@ -161,11 +194,16 @@ export default function GuestPhoneCall() {
                     ? 'bg-gray-400'
                     : 'bg-purple-500 shadow-lg shadow-purple-400'
                 }`}
+                aria-label="Play AI response"
               >
                 {isPlaying ? '⏳' : '🔊'}
               </button>
 
-              <button className="w-16 h-16 rounded-full flex items-center justify-center text-2xl bg-red-600 shadow-lg shadow-red-400 hover:scale-110 transition transform">
+              <button
+                onClick={() => { setTranscript(''); setAiResponse(''); setStatusText('Ready.') }}
+                className="w-16 h-16 rounded-full flex items-center justify-center text-2xl bg-red-600 shadow-lg shadow-red-400 hover:scale-110 transition transform"
+                aria-label="Clear"
+              >
                 ❌
               </button>
             </div>

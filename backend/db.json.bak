@@ -9,14 +9,14 @@
         {
           "session_id": "s1",
           "time": "14:00",
-          "current_pax": 2,
+          "current_pax": 0,
           "min_pax": 4,
           "status": "warning"
         },
         {
           "session_id": "s2",
           "time": "16:00",
-          "current_pax": 4,
+          "current_pax": 6,
           "min_pax": 4,
           "status": "confirmed"
         }
@@ -31,14 +31,14 @@
         {
           "session_id": "s3",
           "time": "10:00",
-          "current_pax": 1,
+          "current_pax": 0,
           "min_pax": 3,
           "status": "warning"
         },
         {
           "session_id": "s4",
           "time": "15:00",
-          "current_pax": 5,
+          "current_pax": 6,
           "min_pax": 3,
           "status": "full"
         }
@@ -66,7 +66,7 @@
       "guest_name": "Marcus Mueller",
       "country": "Germany",
       "email": "marcus.mueller@example.de",
-      "session_id": "s1",
+      "session_id": "s2",
       "pax": 2,
       "phone": "+49 30 1234 5678",
       "experience": "Beginner"
@@ -96,7 +96,7 @@
       "guest_name": "Yuki Tanaka",
       "country": "Japan",
       "email": "yuki.tanaka@example.jp",
-      "session_id": "s3",
+      "session_id": "s4",
       "pax": 1,
       "phone": "+81 3 4567 8901",
       "experience": "Beginner"

@@ -1,0 +1,32 @@
+[
+  {
+    "type": "approve_reschedule",
+    "from_session_id": "s1",
+    "to_session_id": "s2"
+  },
+  {
+    "type": "call_guest",
+    "booking_id": "b1",
+    "guest_name": "Marcus Mueller"
+  },
+  {
+    "type": "approve_reschedule",
+    "from_session_id": "s1",
+    "to_session_id": "s2"
+  },
+  {
+    "type": "approve_reschedule",
+    "from_session_id": "s3",
+    "to_session_id": "s4"
+  },
+  {
+    "type": "approve_reschedule",
+    "from_session_id": "s1",
+    "to_session_id": "s2"
+  },
+  {
+    "type": "approve_reschedule",
+    "from_session_id": "s1",
+    "to_session_id": "s2"
+  }
+]
