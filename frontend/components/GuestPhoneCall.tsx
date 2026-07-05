@@ -151,10 +151,10 @@ export default function GuestPhoneCall({ context, onClose }: Props) {
 
       recorder.start()
 
-      // Auto-stop after 8 seconds of listening
+      // Auto-stop after 6 seconds of listening
       setTimeout(() => {
         if (recorder.state === 'recording') recorder.stop()
-      }, 8000)
+      }, 6000)
     }).catch(() => {
       setStatusText('Microphone unavailable — tap End to close.')
     })

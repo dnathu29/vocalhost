@@ -79,10 +79,17 @@ const FALLBACK_WORKSHOPS: Workshop[] = [
 
 function FillBar({ current, min, max }: { current: number; min: number; max: number }) {
   const pct = Math.min(100, Math.round((current / (max || min)) * 100))
+  const minPct = Math.min(100, Math.round((min / (max || min)) * 100))
   const color = current < min ? 'bg-terracotta' : current >= max ? 'bg-sage' : 'bg-gold'
   return (
-    <div className="w-full h-2 bg-blush/50 rounded-full overflow-hidden">
+    <div className="relative w-full h-2 bg-blush/50 rounded-full overflow-visible">
       <div className={`h-full rounded-full transition-all duration-500 ${color}`} style={{ width: `${pct}%` }} />
+      {/* min pax marker */}
+      <div
+        className="absolute top-1/2 -translate-y-1/2 w-0.5 h-3.5 bg-bark/50 rounded-full"
+        style={{ left: `${minPct}%` }}
+        title={`Min: ${min}`}
+      />
     </div>
   )
 }
@@ -409,7 +416,7 @@ export default function HostDashboard({ onStartCall }: { onStartCall: (ctx: Call
                                 <StatusPill status={s.status} />
                               </div>
                               <FillBar current={s.current_pax} min={s.min_pax} max={s.max_pax} />
-                              <p className="text-warm text-xs mt-1">{s.current_pax}/{s.max_pax} guests</p>
+                              <p className="text-warm text-xs mt-1.5">{s.current_pax} guests · min {s.min_pax} · max {s.max_pax}</p>
                             </div>
                           )
                         })
@@ -457,6 +464,7 @@ export default function HostDashboard({ onStartCall }: { onStartCall: (ctx: Call
                 <span className="text-espresso font-medium">{selectedSession.current_pax} / {selectedSession.max_pax} guests</span>
               </div>
               <FillBar current={selectedSession.current_pax} min={selectedSession.min_pax} max={selectedSession.max_pax} />
+              <p className="text-warm text-xs mt-1.5">Min required: {selectedSession.min_pax} · Capacity: {selectedSession.max_pax}</p>
               <div className="mt-2"><StatusPill status={selectedSession.status} /></div>
             </div>
             <div className="flex gap-3">
