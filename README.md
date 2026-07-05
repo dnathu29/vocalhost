@@ -30,26 +30,40 @@ vocalhost/
 - Python 3.10+
 - Node.js 18+
 - Git
+- ffmpeg (for voice/STT) — `brew install ffmpeg` on macOS
 
-### Backend Setup
+### One-command launch
+
 ```bash
-cd backend
-python -m venv venv
-source venv/bin/activate  # On Windows: venv\Scripts\activate
-pip install -r requirements.txt
-cp .env.example .env
-# Add your API keys to .env
-python -m uvicorn app:app --reload
+git clone https://github.com/dnathu29/vocalhost.git
+cd vocalhost
+./start.sh
 ```
 
-### Frontend Setup
+The script will:
+1. Create `backend/.env` from `.env.example` if it doesn't exist
+2. Set up the Python virtual environment and install dependencies
+3. Install frontend Node modules if needed
+4. Start both servers — frontend at **http://localhost:3000**, backend at **http://localhost:8000**
+
+> **First run:** open `backend/.env` and add your `GRADIUM_API_KEY` to enable voice features.
+
+### Manual setup (alternative)
+
 ```bash
+# Backend
+cd backend
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+cp .env.example .env   # then add your API keys
+python -m uvicorn app:app --reload
+
+# Frontend (separate terminal)
 cd frontend
 npm install
 npm run dev
 ```
-
-Visit `http://localhost:3000` to view the app.
 
 ## 📡 API Endpoints
 - `POST /api/run-agent` - Trigger agent planning
