@@ -21,6 +21,9 @@ except ImportError:
 # Voice service (Member 2 — The Voice / Gradium)
 from voice import GradiumError, audio_to_text, text_to_audio_base64
 
+# Agent service (Member 1 — The Brain / Vultr)
+from agent import run_planning_agent, run_negotiation_agent, get_conversation_history, reset_conversation
+
 # Initialize FastAPI
 app = FastAPI(
     title="VocalHost API",
@@ -73,13 +76,19 @@ class TTSRequest(BaseModel):
 class STTRequest(BaseModel):
     audio_data: str  # base64-encoded recording from the browser
 
-class ApproveMoveRequest(BaseModel):
-    from_session_id: str
-    to_session_id: Optional[str] = None
+# --- Agent request models (Member 1) ---
 
-class CallGuestRequest(BaseModel):
+class NegotiateRequest(BaseModel):
     booking_id: str
-    guest_name: str
+    guest_message: Optional[str] = None
+    # Fields below are only needed on the first call to start the conversation
+    guest_name: str = ""
+    from_session_id: str = ""
+    from_time: str = ""
+    to_session_id: str = ""
+    to_time: str = ""
+    workshop_name: str = ""
+    incentive: str = "a complimentary drink voucher"
 
 # ============================================================================
 # DATABASE HELPERS
@@ -208,198 +217,51 @@ async def update_booking(booking_id: str, new_session_id: str):
 @app.post("/api/run-agent")
 async def run_agent():
     """
-    Trigger the AI Agent to analyze sessions and plan consolidation.
-    
-    Returns:
-    - Identified underbooked sessions
-    - Recommended consolidation plan
-    - Customers to contact
-    
-    TODO: Member 1 implements agent logic here
+    Phase 1: Trigger the AI Agent to analyze sessions and plan consolidation.
+
+    The agent calls Vultr Serverless Inference, uses tools to read db.json,
+    and returns a structured consolidation plan with customers to contact.
     """
-    db = load_db()
-
-    underbooked_sessions = []
-    consolidation_plan = []
-    customers_to_contact = []
-
-    # Simple planning heuristic:
-    # 1) Find sessions below min_pax.
-    # 2) Suggest moving those bookings to the fullest session in the same workshop.
-    for workshop in db.workshops:
-        for session in workshop.sessions:
-            if session.current_pax >= session.min_pax:
-                continue
-
-            underbooked_sessions.append({
-                "workshop_id": workshop.id,
-                "workshop_name": workshop.name,
-                "session_id": session.session_id,
-                "time": session.time,
-                "current_pax": session.current_pax,
-                "min_pax": session.min_pax,
-                "pax_gap": session.min_pax - session.current_pax,
-            })
-
-            candidate_sessions = [
-                s for s in workshop.sessions if s.session_id != session.session_id
-            ]
-
-            target_session = None
-            if candidate_sessions:
-                target_session = max(candidate_sessions, key=lambda s: s.current_pax)
-
-            impacted_bookings = [
-                b for b in db.bookings if b.session_id == session.session_id
-            ]
-
-            plan_item = {
-                "workshop_id": workshop.id,
-                "workshop_name": workshop.name,
-                "from_session_id": session.session_id,
-                "from_time": session.time,
-                "impacted_bookings_count": len(impacted_bookings),
-            }
-
-            if target_session is not None:
-                plan_item.update({
-                    "to_session_id": target_session.session_id,
-                    "to_time": target_session.time,
-                    "action": "propose_reschedule",
-                })
-            else:
-                plan_item.update({
-                    "to_session_id": None,
-                    "to_time": None,
-                    "action": "manual_review_required",
-                })
-
-            consolidation_plan.append(plan_item)
-
-            for booking in impacted_bookings:
-                customers_to_contact.append({
-                    "booking_id": booking.booking_id,
-                    "guest_name": booking.guest_name,
-                    "phone": booking.phone,
-                    "current_session_id": session.session_id,
-                    "proposed_session_id": target_session.session_id if target_session else None,
-                })
-
-    if not underbooked_sessions:
-        return {
-            "status": "success",
-            "underbooked_sessions": [],
-            "consolidation_plan": [],
-            "customers_to_contact": [],
-            "message": "No underbooked sessions found. No action required.",
-        }
-
-    return {
-        "status": "success",
-        "underbooked_sessions": underbooked_sessions,
-        "consolidation_plan": consolidation_plan,
-        "customers_to_contact": customers_to_contact,
-        "message": f"Generated {len(consolidation_plan)} consolidation recommendation(s).",
-    }
-
-@app.get("/api/agent/actions")
-async def get_agent_actions():
-    """Return persisted host actions for demo traceability."""
-    items = load_action_log()
-    return {"status": "success", "items": items}
-
-@app.post("/api/agent/actions/approve")
-async def approve_reschedule(req: ApproveMoveRequest):
-    """Persist host approval decision for a proposed move."""
-    items = load_action_log()
-    entry = {
-        "type": "approve_reschedule",
-        "from_session_id": req.from_session_id,
-        "to_session_id": req.to_session_id,
-    }
-    items.append(entry)
-    save_action_log(items)
-    # Approval is audited only; applying moves is an explicit operation
-    return {"status": "success", "entry": entry, "applied": False, "message": "Approval logged. Use /api/agent/actions/execute to apply."}
-
-
-@app.post("/api/agent/actions/execute")
-async def execute_move(req: ApproveMoveRequest):
-    """Execute an approved move and write the applied snapshot to db.applied.json."""
-    if not req.to_session_id:
-        return {"status": "error", "message": "`to_session_id` required to execute move."}
-
     try:
-        db = load_db()
-
-        bookings_to_move = [b for b in db.bookings if b.session_id == req.from_session_id]
-        if not bookings_to_move:
-            return {"status": "success", "applied": False, "moved_bookings": [], "message": "No bookings to move."}
-
-        total_pax_moved = 0
-        moved_ids = []
-        for b in bookings_to_move:
-            total_pax_moved += getattr(b, 'pax', 1) or 1
-            b.session_id = req.to_session_id
-            moved_ids.append(b.booking_id)
-
-        for workshop in db.workshops:
-            for s in workshop.sessions:
-                if s.session_id == req.from_session_id:
-                    s.current_pax = max(0, s.current_pax - total_pax_moved)
-                if s.session_id == req.to_session_id:
-                    s.current_pax = s.current_pax + total_pax_moved
-
-        snap = save_applied_db(db)
+        plan = await run_planning_agent()
+        return plan
     except Exception as e:
-        return {"status": "error", "message": f"Failed to execute move: {e}"}
-    return {"status": "success", "applied": True, "moved_bookings": moved_ids, "total_pax_moved": total_pax_moved, "snapshot": snap}
+        raise HTTPException(status_code=500, detail=f"Agent error: {e}")
 
+@app.post("/api/negotiate")
+async def negotiate(req: NegotiateRequest):
+    """
+    Phase 2: One turn of AI-to-guest voice negotiation.
 
-@app.get("/api/agent/snapshots")
-async def get_snapshots():
-    """List applied snapshot files (timestamped)."""
-    snaps = list_applied_snapshots()
-    return {"status": "success", "snapshots": snaps}
+    First call (guest_message=None): agent introduces itself and makes the offer.
+    Subsequent calls: guest_message contains what the guest said (from STT).
 
+    Returns:
+        agent_message (str): text for TTS
+        tool_results (list): any tools that were called (e.g. update_booking_time)
+        call_ended (bool): True when the agent decides the call is over
+    """
+    try:
+        result = await run_negotiation_agent(
+            booking_id=req.booking_id,
+            guest_message=req.guest_message,
+            guest_name=req.guest_name,
+            from_session_id=req.from_session_id,
+            from_time=req.from_time,
+            to_session_id=req.to_session_id,
+            to_time=req.to_time,
+            workshop_name=req.workshop_name,
+            incentive=req.incentive,
+        )
+        return result
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Negotiation error: {e}")
 
-@app.post("/api/agent/actions/undo")
-async def undo_last_snapshot():
-    """Undo last applied snapshot by restoring the previous snapshot (if available)."""
-    snaps = list_applied_snapshots()
-    if not snaps:
-        return {"status": "error", "message": "No snapshots to undo."}
-
-    # If only one snapshot exists, remove latest applied file
-    if len(snaps) == 1:
-        target = SNAPSHOT_DIR / snaps[0]
-        try:
-            # remove latest applied file
-            if APPLIED_DB_PATH.exists():
-                APPLIED_DB_PATH.unlink()
-            return {"status": "success", "undone": snaps[0], "message": "Removed latest applied snapshot."}
-        except Exception as e:
-            return {"status": "error", "message": f"Failed to undo: {e}"}
-
-    # restore previous snapshot (second last)
-    prev = snaps[-2]
-    ok = restore_snapshot(prev)
-    if not ok:
-        return {"status": "error", "message": "Failed to restore previous snapshot."}
-    return {"status": "success", "restored": prev}
-
-@app.post("/api/agent/actions/call")
-async def log_call_guest(req: CallGuestRequest):
-    """Persist call action made by host operator."""
-    items = load_action_log()
-    entry = {
-        "type": "call_guest",
-        "booking_id": req.booking_id,
-        "guest_name": req.guest_name,
-    }
-    items.append(entry)
-    save_action_log(items)
-    return {"status": "success", "entry": entry}
+@app.post("/api/negotiate/{booking_id}/reset")
+async def reset_negotiation(booking_id: str):
+    """Reset/end a negotiation conversation for a specific booking."""
+    reset_conversation(booking_id)
+    return {"status": "reset", "booking_id": booking_id}
 
 # ============================================================================
 # VOICE ENDPOINTS (Member 2 integrates here)
